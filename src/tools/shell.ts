@@ -1,0 +1,54 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import path from "node:path";
+
+const execFileAsync = promisify(execFile);
+
+const MAX_OUTPUT = 50_000;
+const TIMEOUT_MS = 30_000;
+
+/** git subcommands the agent may not run (destructive / remote-affecting). */
+const GIT_DENY = new Set([
+  "push", "reset", "clean", "rebase", "remote", "config",
+  "checkout", "switch", "restore", "update-index", "filter-branch", "gc",
+]);
+
+export class ShellTools {
+  constructor(
+    private workspace: string,
+    private allowedCommands: string[],
+  ) {}
+
+  async runCommand(command: string, args: string[] = []): Promise<string> {
+    const base = path.basename(command);
+    if (base !== command || !this.allowedCommands.includes(base)) {
+      throw new Error(
+        `command not allowed: ${command}. Allowlist: ${this.allowedCommands.join(", ")} ` +
+          `(extend via ALLOWED_COMMANDS in .env)`,
+      );
+    }
+    if (base === "git" && args.length > 0 && GIT_DENY.has(args[0])) {
+      throw new Error(`git subcommand not allowed: ${args[0]} (denied: ${[...GIT_DENY].join(", ")})`);
+    }
+    try {
+      const { stdout, stderr } = await execFileAsync(base, args, {
+        cwd: this.workspace,
+        timeout: TIMEOUT_MS,
+        maxBuffer: 4 * 1024 * 1024,
+      });
+      return this.format(base, args, stdout, stderr, 0);
+    } catch (err: unknown) {
+      const e = err as { code?: number | string; stdout?: string; stderr?: string; killed?: boolean };
+      if (e.killed) throw new Error(`command timed out after ${TIMEOUT_MS / 1000}s: ${base}`);
+      return this.format(base, args, e.stdout ?? "", e.stderr ?? "", e.code ?? "?");
+    }
+  }
+
+  private format(base: string, args: string[], stdout: string, stderr: string, code: number | string): string {
+    let out = `$ ${base} ${args.join(" ")} (exit ${code})\n`;
+    if (stdout) out += stdout;
+    if (stderr) out += (stdout ? "\n" : "") + `[stderr]\n${stderr}`;
+    if (out.length > MAX_OUTPUT) out = out.slice(0, MAX_OUTPUT) + "\n… (truncated)";
+    return out.trim() || "(no output)";
+  }
+}

@@ -1,0 +1,183 @@
+import { Bot } from "grammy";
+import type { Context } from "grammy";
+import type { ChatCompletionUserMessageParam } from "openai/resources/chat/completions";
+import type { Agent } from "./agent.js";
+import type { HistoryStore } from "./history.js";
+import { transcribeVoice } from "./stt.js";
+import { git } from "./tools/git.js";
+
+export interface BotDeps {
+  token: string;
+  allowedUserIds: Set<number>;
+  workspace: string;
+  tmpDir: string;
+  whisperUrl: string;
+  llmBaseUrl: string;
+  llmModel: string;
+  agent: Agent;
+  history: HistoryStore;
+}
+
+const MAX_TG_MESSAGE = 4000;
+/** Ignore messages older than this (e.g. delivered while the bot was down). */
+const MAX_MESSAGE_AGE_S = 120;
+
+function chunk(text: string, size = MAX_TG_MESSAGE): string[] {
+  if (text.length <= size) return [text];
+  const parts: string[] = [];
+  let rest = text;
+  while (rest.length > size) {
+    let cut = rest.lastIndexOf("\n", size);
+    if (cut < size / 2) cut = size;
+    parts.push(rest.slice(0, cut));
+    rest = rest.slice(cut).replace(/^\n+/, "");
+  }
+  if (rest.trim()) parts.push(rest);
+  return parts;
+}
+
+export function createBot(deps: BotDeps): Bot {
+  const bot = new Bot(deps.token);
+  // Serialize work per conversation so parallel voice notes don't interleave agent runs.
+  const queues = new Map<string, Promise<void>>();
+
+  const convKey = (ctx: Context): string =>
+    `${ctx.chat?.id}:${ctx.message?.message_thread_id ?? 0}`;
+
+  const threadOpts = (ctx: Context): { message_thread_id?: number } => {
+    const id = ctx.message?.message_thread_id;
+    return id !== undefined ? { message_thread_id: id } : {};
+  };
+
+  const reply = async (ctx: Context, text: string): Promise<void> => {
+    for (const part of chunk(text)) {
+      await ctx.reply(part, threadOpts(ctx));
+    }
+  };
+
+  const enqueue = (key: string, job: () => Promise<void>): void => {
+    const prev = queues.get(key) ?? Promise.resolve();
+    const next = prev.then(job).catch((err) => console.error("[queue]", err));
+    queues.set(key, next);
+  };
+
+  // ---- auth gate: silently ignore everyone not on the allowlist ----
+  bot.use(async (ctx, next) => {
+    const id = ctx.from?.id;
+    if (id === undefined || !deps.allowedUserIds.has(id)) {
+      console.log(`[auth] ignored update from user ${id ?? "unknown"}`);
+      return;
+    }
+    await next();
+  });
+
+  bot.command("clear", async (ctx) => {
+    deps.history.clear(convKey(ctx));
+    await reply(ctx, "Conversation context cleared for this topic.");
+  });
+
+  bot.command("status", async (ctx) => {
+    let gitLine = "(git unavailable)";
+    try {
+      const status = (await git(deps.workspace, ["status", "--short"])).trim();
+      const branch = (await git(deps.workspace, ["branch", "--show-current"])).trim();
+      const last = (await git(deps.workspace, ["log", "-1", "--oneline"])).trim();
+      gitLine = `branch ${branch || "(unborn)"}, last commit: ${last || "none"}` +
+        (status ? `\nuncommitted:\n${status}` : "\nworking tree clean");
+    } catch { /* ignore */ }
+    await reply(
+      ctx,
+      [
+        `workspace: ${deps.workspace}`,
+        `git: ${gitLine}`,
+        `llm: ${deps.llmModel} @ ${deps.llmBaseUrl}`,
+        `whisper: ${deps.whisperUrl}`,
+      ].join("\n"),
+    );
+  });
+
+  const handleUserContent = async (ctx: Context, content: ChatCompletionUserMessageParam["content"]): Promise<void> => {
+    const key = convKey(ctx);
+    // keep the "typing…" indicator alive while the agent works
+    const typing = setInterval(() => {
+      ctx.api.sendChatAction(ctx.chat!.id, "typing", threadOpts(ctx)).catch(() => {});
+    }, 4500);
+    await ctx.api.sendChatAction(ctx.chat!.id, "typing", threadOpts(ctx)).catch(() => {});
+    try {
+      const messages = deps.history.appendUser(key, content);
+      const answer = await deps.agent.runTurn(messages);
+      await reply(ctx, answer);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[agent]", err);
+      await reply(ctx, `Something went wrong: ${msg}\n(llm backend: ${deps.llmBaseUrl})`);
+    } finally {
+      clearInterval(typing);
+    }
+  };
+
+  /** Download a Telegram file as a base64 data URL. */
+  const downloadAsDataUrl = async (fileId: string): Promise<string> => {
+    const file = await bot.api.getFile(fileId);
+    if (!file.file_path) throw new Error("Telegram returned no file_path");
+    const url = `https://api.telegram.org/file/bot${deps.token}/${file.file_path}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`file download failed: HTTP ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    const mime = file.file_path.endsWith(".png") ? "image/png" : "image/jpeg";
+    return `data:${mime};base64,${buf.toString("base64")}`;
+  };
+
+  bot.on("message:text", async (ctx) => {
+    if (Math.floor(Date.now() / 1000) - ctx.message.date > MAX_MESSAGE_AGE_S) return;
+    const key = convKey(ctx);
+    enqueue(key, () => handleUserContent(ctx, ctx.message.text));
+  });
+
+  bot.on("message:photo", async (ctx) => {
+    if (Math.floor(Date.now() / 1000) - ctx.message.date > MAX_MESSAGE_AGE_S) return;
+    const key = convKey(ctx);
+    enqueue(key, async () => {
+      let dataUrl: string;
+      try {
+        // Telegram sends several sizes; the last is the largest
+        const biggest = ctx.message.photo[ctx.message.photo.length - 1];
+        dataUrl = await downloadAsDataUrl(biggest.file_id);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error("[photo]", err);
+        await reply(ctx, `Could not download that photo: ${msg}`);
+        return;
+      }
+      // Gemma 4 best practice: image before text
+      await handleUserContent(ctx, [
+        { type: "image_url", image_url: { url: dataUrl } },
+        { type: "text", text: ctx.message.caption ?? "What is in this image?" },
+      ]);
+    });
+  });
+
+  bot.on("message:voice", async (ctx) => {
+    if (Math.floor(Date.now() / 1000) - ctx.message.date > MAX_MESSAGE_AGE_S) return;
+    const key = convKey(ctx);
+    enqueue(key, async () => {
+      let text: string;
+      try {
+        const file = await ctx.api.getFile(ctx.message.voice.file_id);
+        if (!file.file_path) throw new Error("Telegram returned no file_path");
+        const url = `https://api.telegram.org/file/bot${deps.token}/${file.file_path}`;
+        text = await transcribeVoice({ fileUrl: url, whisperUrl: deps.whisperUrl, tmpDir: deps.tmpDir });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error("[stt]", err);
+        await reply(ctx, `Could not transcribe that voice message: ${msg}`);
+        return;
+      }
+      await reply(ctx, `heard: "${text}"`);
+      await handleUserContent(ctx, text);
+    });
+  });
+
+  bot.catch((err) => console.error("[bot]", err));
+  return bot;
+}

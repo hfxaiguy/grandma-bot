@@ -1,0 +1,25 @@
+{
+  "name": "grandma-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local Telegram agent harness: forum topics, voice-to-text on Vulkan GPU, file editing with git auto-commit",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "smoke": "tsx scripts/smoke.ts",
+    "whisper:up": "vendor/whisper.cpp/build/bin/whisper-server --host 127.0.0.1 --port 8178 -m vendor/whisper.cpp/models/ggml-base.bin"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "grammy": "^1.45.1",
+    "openai": "^6.48.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2"
+  }
+}
