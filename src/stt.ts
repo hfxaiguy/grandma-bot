@@ -11,10 +11,12 @@ export interface SttOptions {
   fileUrl: string;
   whisperUrl: string;
   tmpDir: string;
+  /** Optional language override sent per-request ("en", "de", "auto", ...). */
+  language?: string;
 }
 
 /** Download a Telegram voice note, convert to 16kHz mono WAV, transcribe via whisper.cpp server. */
-export async function transcribeVoice({ fileUrl, whisperUrl, tmpDir }: SttOptions): Promise<string> {
+export async function transcribeVoice({ fileUrl, whisperUrl, tmpDir, language }: SttOptions): Promise<string> {
   const id = randomUUID();
   const oggPath = path.join(tmpDir, `${id}.ogg`);
   const wavPath = path.join(tmpDir, `${id}.wav`);
@@ -33,6 +35,7 @@ export async function transcribeVoice({ fileUrl, whisperUrl, tmpDir }: SttOption
     form.append("file", new Blob([wav], { type: "audio/wav" }), "audio.wav");
     form.append("response_format", "json");
     form.append("temperature", "0.0");
+    if (language) form.append("language", language);
 
     const wr = await fetch(`${whisperUrl}/inference`, { method: "POST", body: form });
     if (!wr.ok) throw new Error(`whisper-server failed: HTTP ${wr.status} — ${(await wr.text()).slice(0, 300)}`);

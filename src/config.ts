@@ -32,6 +32,8 @@ export const config = {
   llmApiKey: process.env.LLM_API_KEY ?? "local",
   llmModel: process.env.LLM_MODEL ?? "local",
   whisperUrl: (process.env.WHISPER_URL ?? "http://127.0.0.1:8178").replace(/\/$/, ""),
+  /** Spoken language for STT (e.g. "en", "de", "auto"). Empty = server default ("en"). */
+  whisperLanguage: process.env.WHISPER_LANGUAGE ?? "",
   allowedCommands: (process.env.ALLOWED_COMMANDS ?? DEFAULT_COMMANDS.join(","))
     .split(",")
     .map((s) => s.trim())

@@ -12,6 +12,7 @@ export interface BotDeps {
   workspace: string;
   tmpDir: string;
   whisperUrl: string;
+  whisperLanguage: string;
   llmBaseUrl: string;
   llmModel: string;
   agent: Agent;
@@ -166,7 +167,12 @@ export function createBot(deps: BotDeps): Bot {
         const file = await ctx.api.getFile(ctx.message.voice.file_id);
         if (!file.file_path) throw new Error("Telegram returned no file_path");
         const url = `https://api.telegram.org/file/bot${deps.token}/${file.file_path}`;
-        text = await transcribeVoice({ fileUrl: url, whisperUrl: deps.whisperUrl, tmpDir: deps.tmpDir });
+        text = await transcribeVoice({
+          fileUrl: url,
+          whisperUrl: deps.whisperUrl,
+          tmpDir: deps.tmpDir,
+          language: deps.whisperLanguage || undefined,
+        });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error("[stt]", err);

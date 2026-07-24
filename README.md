@@ -118,7 +118,8 @@ independent of the harness.
    cmake --build vendor/whisper.cpp/build -j --target whisper-server
    vendor/whisper.cpp/models/download-ggml-model.sh base   # or small / base.en / ...
    ```
-   If you change the model, update the path in the `whisper:up` script in `package.json`.
+   To use a different model, download it and set `WHISPER_MODEL` in `.env`
+   (used by `npm run whisper:up`).
 5. **LLM backend** — Hugging Face router by default (already set in `.env.example`):
    create a token at https://huggingface.co/settings/tokens with
    *Inference Providers* permission and paste it as `LLM_API_KEY`.
@@ -318,10 +319,22 @@ Vulkan via Mesa's RADV driver is fully supported on this card, and whisper.cpp's
 `ggml-vulkan` backend runs the whole model there. Same reason a local
 `llama-server` would be built with `-DGGML_VULKAN=ON`.
 
-**How do I get better transcription quality?**
-Download a bigger model (`download-ggml-model.sh small` or `medium`) and update
-the path in the `whisper:up` npm script. `base` is the speed/quality sweet spot;
-`.en` variants are faster but English-only. GPU VRAM usage stays tiny either way.
+**What settings does whisper run with, and how do I make it more accurate?**
+Current: `ggml-small.bin` on the GPU, greedy decoding (`temperature=0.0` per
+request, beam search off), language forced to `en` (the whisper-server default).
+Three accuracy levers, biggest first:
+
+1. **Model size.** `WHISPER_MODEL` in `.env` + restart `whisper:up`. Measured on
+   this RX 570 with an 11 s clip: `base` 1.1 s → `small` 1.4 s →
+   `large-v3-turbo-q5_0` 4.3 s (already downloaded; the clear quality winner if
+   you tolerate the wait — still ~2.5× faster than realtime, fine for short
+   voice notes). `medium` (~1.5 GB) also fits the card.
+2. **Lock the language.** `WHISPER_LANGUAGE=en` (or `de`, `nl`, …) in `.env` is
+   sent per-request — avoids mis-transcribing short clips as another language
+   and improves word accuracy. `auto` enables detection but is unreliable on
+   very short audio.
+3. **Beam search.** Add `--beam-size 5` to the `whisper:up` command in
+   `package.json` — a small WER improvement for ~2–3× latency.
 
 ### Security
 

@@ -37,6 +37,7 @@ async function main(): Promise<void> {
     workspace: config.workspaceDir,
     tmpDir: config.tmpDir,
     whisperUrl: config.whisperUrl,
+    whisperLanguage: config.whisperLanguage,
     llmBaseUrl: config.llmBaseUrl,
     llmModel: config.llmModel,
     agent,
