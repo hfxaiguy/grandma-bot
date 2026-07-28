@@ -31,9 +31,12 @@ export const config = {
   llmBaseUrl: (process.env.LLM_BASE_URL ?? "http://127.0.0.1:8080/v1").replace(/\/$/, ""),
   llmApiKey: process.env.LLM_API_KEY ?? "local",
   llmModel: process.env.LLM_MODEL ?? "local",
+  /** STT backend: "whisper" (whisper.cpp server) or "sherpa" (sherpa-onnx HTTP server). */
+  sttBackend: ((process.env.STT_BACKEND ?? "whisper").toLowerCase() === "sherpa" ? "sherpa" : "whisper") as "whisper" | "sherpa",
   whisperUrl: (process.env.WHISPER_URL ?? "http://127.0.0.1:8178").replace(/\/$/, ""),
+  sherpaUrl: (process.env.SHERPA_URL ?? "http://127.0.0.1:8178").replace(/\/$/, ""),
   /** Spoken language for STT (e.g. "en", "de", "auto"). Empty = server default ("en"). */
-  whisperLanguage: process.env.WHISPER_LANGUAGE ?? "",
+  sttLanguage: process.env.STT_LANGUAGE ?? process.env.WHISPER_LANGUAGE ?? "",
   allowedCommands: (process.env.ALLOWED_COMMANDS ?? DEFAULT_COMMANDS.join(","))
     .split(",")
     .map((s) => s.trim())

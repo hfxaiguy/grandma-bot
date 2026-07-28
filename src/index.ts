@@ -5,7 +5,7 @@ import { ToolRegistry } from "./tools/index.js";
 import { Agent } from "./agent.js";
 import { HistoryStore } from "./history.js";
 import { createBot } from "./bot.js";
-import { checkWhisper } from "./stt.js";
+import { checkStt } from "./stt.js";
 
 async function main(): Promise<void> {
   await fs.mkdir(config.workspaceDir, { recursive: true });
@@ -23,11 +23,11 @@ async function main(): Promise<void> {
   });
   const history = new HistoryStore(config.historyLimit);
 
-  const whisperOk = await checkWhisper(config.whisperUrl);
-  if (!whisperOk) {
+  const sttUrl = config.sttBackend === "sherpa" ? config.sherpaUrl : config.whisperUrl;
+  const sttOk = await checkStt(config.sttBackend, config.whisperUrl, config.sherpaUrl);
+  if (!sttOk) {
     console.warn(
-      `[warn] whisper-server not reachable at ${config.whisperUrl} — voice messages will fail.\n` +
-        `       start it with: npm run whisper:up`,
+      `[warn] ${config.sttBackend}-server not reachable at ${sttUrl} — voice messages will fail.`,
     );
   }
 
@@ -36,8 +36,10 @@ async function main(): Promise<void> {
     allowedUserIds: config.allowedUserIds,
     workspace: config.workspaceDir,
     tmpDir: config.tmpDir,
+    sttBackend: config.sttBackend,
     whisperUrl: config.whisperUrl,
-    whisperLanguage: config.whisperLanguage,
+    sherpaUrl: config.sherpaUrl,
+    sttLanguage: config.sttLanguage,
     llmBaseUrl: config.llmBaseUrl,
     llmModel: config.llmModel,
     agent,
@@ -52,7 +54,7 @@ async function main(): Promise<void> {
       console.log(`grandma-bot up as @${me.username}`);
       console.log(`workspace : ${config.workspaceDir} (git auto-commit on)`);
       console.log(`llm       : ${config.llmModel} @ ${config.llmBaseUrl}`);
-      console.log(`whisper   : ${config.whisperUrl} ${whisperOk ? "(reachable)" : "(NOT reachable)"}`);
+      console.log(`stt       : ${config.sttBackend} @ ${sttUrl} ${sttOk ? "(reachable)" : "(NOT reachable)"}`);
       console.log(`users     : ${[...config.allowedUserIds].join(", ")}`);
     },
   });

@@ -3,7 +3,7 @@ import type { Context } from "grammy";
 import type { ChatCompletionUserMessageParam } from "openai/resources/chat/completions";
 import type { Agent } from "./agent.js";
 import type { HistoryStore } from "./history.js";
-import { transcribeVoice } from "./stt.js";
+import { transcribeVoice, type SttBackend } from "./stt.js";
 import { git } from "./tools/git.js";
 
 export interface BotDeps {
@@ -11,8 +11,10 @@ export interface BotDeps {
   allowedUserIds: Set<number>;
   workspace: string;
   tmpDir: string;
+  sttBackend: SttBackend;
   whisperUrl: string;
-  whisperLanguage: string;
+  sherpaUrl: string;
+  sttLanguage: string;
   llmBaseUrl: string;
   llmModel: string;
   agent: Agent;
@@ -92,7 +94,7 @@ export function createBot(deps: BotDeps): Bot {
         `workspace: ${deps.workspace}`,
         `git: ${gitLine}`,
         `llm: ${deps.llmModel} @ ${deps.llmBaseUrl}`,
-        `whisper: ${deps.whisperUrl}`,
+        `stt: ${deps.sttBackend}${deps.sttBackend === "sherpa" ? ` @ ${deps.sherpaUrl}` : ` @ ${deps.whisperUrl}`}`,
       ].join("\n"),
     );
   });
@@ -169,9 +171,11 @@ export function createBot(deps: BotDeps): Bot {
         const url = `https://api.telegram.org/file/bot${deps.token}/${file.file_path}`;
         text = await transcribeVoice({
           fileUrl: url,
+          backend: deps.sttBackend,
           whisperUrl: deps.whisperUrl,
+          sherpaUrl: deps.sherpaUrl,
           tmpDir: deps.tmpDir,
-          language: deps.whisperLanguage || undefined,
+          language: deps.sttLanguage || undefined,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
