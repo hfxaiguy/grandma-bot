@@ -41,15 +41,15 @@ const calls: { model: string; messages: ChatCompletionMessageParam[] }[] = [];
 const handler = async (messages: ChatCompletionMessageParam[], ctx: Ctx) => {
   calls.push({ model: ctx.model, messages: messages.map((m) => ({ ...m })) });
   if (ctx.model === "cheap") {
-    // Cheap handles BOTH classify and direct. The classify step asks for
-    // "tools" or "direct" via a focused system prompt; the direct branch
-    // asks the full system-prompted question. Distinguish by the system
-    // prompt's first sentence, then look at the user's intent to pick
-    // a classification.
+    // Cheap handles BOTH classify and direct. The classify step asks
+    // for "tools" or "direct" via a focused system prompt; the direct
+    // branch asks the full system-prompted question. Distinguish by
+    // the system prompt's first sentence, then look at the user's
+    // intent to pick a classification.
     const systemText =
       typeof messages[0]?.content === "string" ? messages[0].content : "";
     if (systemText.startsWith("Decide whether")) {
-      // Classify step: "create mock.txt..." -> "tools"; otherwise "direct".
+      // Classify: "create mock.txt..." -> "tools"; otherwise "direct".
       const userText = typeof messages[1]?.content === "string" ? messages[1].content : "";
       return {
         content: /create|file|write|edit|delete|run/i.test(userText) ? "tools" : "direct",
@@ -128,20 +128,19 @@ const handler = async (messages: ChatCompletionMessageParam[], ctx: Ctx) => {
   assert.equal(strongCalls[1].messages[3].role, "tool");
   assert.equal(strongCalls[1].messages[3].tool_call_id, "call_1");
 
-  // The result is the updated messages array from the tools branch;
-  // extract the last assistant text for the assertion.
-  const resultHistory = result as ChatCompletionMessageParam[];
-  assert.ok(Array.isArray(resultHistory), "result should be the messages array");
-  assert.equal(resultHistory.length, 4);
-  const lastAssistant = resultHistory[resultHistory.length - 1];
-  assert.equal(lastAssistant.role, "assistant");
-  assert.equal(lastAssistant.content, "Done — wrote mock.txt.");
+  // The tree's exported value is the final assistant text.
+  assert.equal(result, "Done — wrote mock.txt.");
 
-  // The user's history got the full exchange appended.
-  const finalHistory = (memory as { direct?: unknown; tools?: unknown }).tools;
-  assert.ok(Array.isArray(finalHistory), "tools branch should export an array");
-  const hist = finalHistory as ChatCompletionMessageParam[];
-  assert.equal(hist.length, 4, `expected 4 history messages, got ${hist.length}`);
+  // The runner updated the root's "messages" slot across both until()
+  // passes. The user's history has all 4 entries.
+  const finalHistory = (memory as { messages: ChatCompletionMessageParam[] }).messages;
+  assert.equal(finalHistory.length, 4, `expected 4 history messages, got ${finalHistory.length}`);
+  assert.equal(finalHistory[0].role, "user");
+  assert.equal(finalHistory[1].role, "assistant");
+  assert.ok(Array.isArray(finalHistory[1].tool_calls));
+  assert.equal(finalHistory[2].role, "tool");
+  assert.equal(finalHistory[3].role, "assistant");
+  assert.equal(finalHistory[3].content, "Done — wrote mock.txt.");
 
   // Side effect: file written + auto-committed.
   const content = await fs.readFile(path.join(ws, "mock.txt"), "utf8");
@@ -179,12 +178,15 @@ const handler = async (messages: ChatCompletionMessageParam[], ctx: Ctx) => {
   assert.equal(cheapCalls.length, 2, "expected 2 cheap calls (classify + direct)");
   assert.equal(strongCalls.length, 0, "strong model must not be called on the direct path");
 
-  // Result is the messages array; extract the last assistant text.
-  const resultHistory = result as ChatCompletionMessageParam[];
-  assert.ok(Array.isArray(resultHistory), "result should be the messages array");
-  assert.equal(resultHistory.length, 2);
-  assert.equal(resultHistory[1].role, "assistant");
-  assert.equal(resultHistory[1].content, "Direct answer from cheap model.");
+  // The tree's exported value is the cheap model's text.
+  assert.equal(result, "Direct answer from cheap model.");
+
+  // History just gets the final assistant turn appended.
+  const finalHistory = (memory as { messages: ChatCompletionMessageParam[] }).messages;
+  assert.equal(finalHistory.length, 2);
+  assert.equal(finalHistory[0].role, "user");
+  assert.equal(finalHistory[1].role, "assistant");
+  assert.equal(finalHistory[1].content, "Direct answer from cheap model.");
 }
 
 await fs.rm(ws, { recursive: true, force: true });

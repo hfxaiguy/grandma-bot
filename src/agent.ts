@@ -4,7 +4,7 @@ import grandma from "grandma-kat";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import type { ToolRegistry } from "./tools/index.js";
 import type { ModelRegistry } from "./models.js";
-import { agentPattern, extractFinalText } from "./patterns/agent.js";
+import { agentPattern } from "./patterns/agent.js";
 
 export interface AgentDeps {
   /** Named LLM registry (e.g. { cheap, strong }) from models.json or env. */
@@ -78,17 +78,17 @@ export class Agent {
   }
 
   /**
-   * Run one conversational turn: appends to `messages` (which must not include
-   * the system message) until the model produces a final text answer.
+   * Run one conversational turn: appends to `messages` (which must not
+   * include the system message) until the model produces a final text
+   * answer.
    *
-   * The control flow is a grandma-kat tree (`patterns/agent.ts`): a cheap
-   * model classifies the latest user message as "direct" or "tools"; the
-   * former is answered by the cheap model, the latter runs the full
-   * tool-using loop on the strong model. The pattern's value is the
-   * updated messages array (root.slots["direct"|"tools"]); we extract the
-   * last assistant text and copy the array back onto the caller's history.
-   * Every LLM call, tool call, and flow-control decision is logged to
-   * `logs/grandma-kat.db`.
+   * The control flow is a grandma-kat tree (`patterns/agent.ts`): a
+   * cheap model classifies the latest user message as "direct" or
+   * "tools"; the former is answered by the cheap model, the latter
+   * runs the full tool-using loop on the strong model. The tree's
+   * `result` is the final assistant text; `memory.messages` is the
+   * updated history. Every LLM call, tool call, and flow-control
+   * decision is logged to `<workspace>/logs/grandma-kat.db`.
    */
   async runTurn(messages: ChatCompletionMessageParam[]): Promise<string> {
     const { result, memory } = await grandma.knit(agentPattern, {
@@ -99,18 +99,14 @@ export class Agent {
       logLevel: "info",
     });
 
-    // The tree's exported value is whichever of "direct"/"tools" ran — both
-    // branches export the updated messages array. Fall back to the caller's
-    // input if neither produced a value (defensive).
-    const updated =
-      (memory as { direct?: unknown }).direct ??
-      (memory as { tools?: unknown }).tools ??
-      messages;
-
+    // Copy the updated history back onto the caller's array (same
+    // reference the HistoryStore holds). `memory.messages` is the root
+    // scope's "messages" slot, which the pattern's memoryUpdate calls
+    // wrote to across all until() passes.
+    const updated = (memory as { messages?: ChatCompletionMessageParam[] }).messages ?? messages;
     messages.length = 0;
-    messages.push(...(updated as ChatCompletionMessageParam[]));
+    messages.push(...updated);
 
-    const text = stripThought(extractFinalText(updated)) || "(empty response)";
-    return text;
+    return stripThought(String(result ?? "")) || "(empty response)";
   }
 }
