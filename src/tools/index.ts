@@ -145,4 +145,44 @@ export class ToolRegistry {
       return `error: ${err instanceof Error ? err.message : String(err)}`;
     }
   }
+
+  /**
+   * Build a grandma-kat tool registry from the OpenAI schemas above.
+   * `execute(args)` calls `dispatch(name, JSON.stringify(args))` so error
+   * handling is identical to the OpenAI tool-call path. Errors that start with
+   * "error" are detected by the runner and surface in m.raw.prev[0].toolResults
+   * with isError=true.
+   */
+  toKatTools(): Record<
+    string,
+    {
+      description: string;
+      parameters: { type: "object"; properties?: Record<string, unknown>; required?: string[] };
+      execute: (args: Json) => Promise<string>;
+    }
+  > {
+    const out: Record<
+      string,
+      {
+        description: string;
+        parameters: { type: "object"; properties?: Record<string, unknown>; required?: string[] };
+        execute: (args: Json) => Promise<string>;
+      }
+    > = {};
+    for (const d of this.definitions) {
+      if (d.type !== "function") continue;
+      const fn = d.function;
+      const name = fn.name;
+      out[name] = {
+        description: fn.description ?? "",
+        parameters: (fn.parameters ?? { type: "object" }) as {
+          type: "object";
+          properties?: Record<string, unknown>;
+          required?: string[];
+        },
+        execute: async (args: Json) => this.dispatch(name, JSON.stringify(args ?? {})),
+      };
+    }
+    return out;
+  }
 }

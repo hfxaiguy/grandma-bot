@@ -10,11 +10,13 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "smoke": "tsx scripts/smoke.ts",
+    "agent:mock": "tsx scripts/agent-mock-test.ts",
     "whisper:up": "sh -c 'set -a; . ./.env 2>/dev/null; set +a; exec vendor/whisper.cpp/build/bin/whisper-server --host 127.0.0.1 --port 8178 -m vendor/whisper.cpp/models/${WHISPER_MODEL:-ggml-base.bin}'"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
     "grammy": "^1.45.1",
+    "grandma-kat": "file:../grandma-knits",
     "openai": "^6.48.0"
   },
   "devDependencies": {

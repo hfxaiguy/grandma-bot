@@ -1,6 +1,9 @@
-import OpenAI from "openai";
+import path from "node:path";
+// @ts-ignore — grandma-kat ships no .d.ts files.
+import grandma from "grandma-kat";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import type { ToolRegistry } from "./tools/index.js";
+import { agentPattern } from "./patterns/agent.js";
 
 export interface AgentDeps {
   baseURL: string;
@@ -19,12 +22,12 @@ function stripThought(text: string): string {
   return text.replace(/<\|channel\|>thought\n[\s\S]*?<channel\|>/g, "").trim();
 }
 
+const LOG_DB = path.resolve(process.cwd(), "logs/grandma-kat.db");
+
 export class Agent {
-  private client: OpenAI;
   private systemPrompt: string;
 
   constructor(private deps: AgentDeps) {
-    this.client = new OpenAI({ baseURL: deps.baseURL, apiKey: deps.apiKey });
     this.systemPrompt = [
       "You are grandma-bot, a personal coding/assistant agent running locally on the user's machine, chatting via Telegram.",
       `You operate inside the workspace directory: ${deps.workspace}. All file tools are sandboxed to it.`,
@@ -40,36 +43,33 @@ export class Agent {
   /**
    * Run one conversational turn: appends to `messages` (which must not include
    * the system message) until the model produces a final text answer.
+   *
+   * The control flow is now a grandma-kat tree (`patterns/agent.ts`): the
+   * runner handles prompt → tool execution → history append → loop, bounded
+   * by `max(maxToolIterations)`. Every LLM call, tool call, and flow-control
+   * decision is logged to `logs/grandma-kat.db`.
    */
   async runTurn(messages: ChatCompletionMessageParam[]): Promise<string> {
-    const full: ChatCompletionMessageParam[] = [{ role: "system", content: this.systemPrompt }, ...messages];
+    const { result, memory } = await grandma.knit(agentPattern, {
+      models: {
+        default: { baseURL: this.deps.baseURL, apiKey: this.deps.apiKey, model: this.deps.model },
+      },
+      tools: this.deps.tools.toKatTools(),
+      // Pass the live array reference; the pattern replaces it with a new
+      // array each pass as it appends tool exchanges. We copy back below.
+      memory: { messages, system: this.systemPrompt },
+      logger: LOG_DB,
+      logLevel: "info",
+    });
 
-    for (let i = 0; i < this.deps.maxToolIterations; i++) {
-      const resp = await this.client.chat.completions.create({
-        model: this.deps.model,
-        messages: full,
-        tools: this.deps.tools.definitions,
-        tool_choice: "auto",
-      });
-      const msg = resp.choices[0]?.message;
-      if (!msg) return "(no response from model)";
+    // Copy the updated history back onto the caller's array (same reference
+    // the HistoryStore holds). Drop the `system` field — it lives only in
+    // runtime memory, never in conversation history.
+    const updated = (memory as { messages: ChatCompletionMessageParam[] }).messages;
+    messages.length = 0;
+    messages.push(...updated);
 
-      full.push({ role: "assistant", content: msg.content ?? null, tool_calls: msg.tool_calls });
-
-      if (!msg.tool_calls || msg.tool_calls.length === 0) {
-        const answer = stripThought(msg.content ?? "") || "(empty response)";
-        // persist assistant turn (final text only; per Gemma 4 guidance, no thoughts in history)
-        messages.push({ role: "assistant", content: answer });
-        return answer;
-      }
-
-      for (const call of msg.tool_calls) {
-        if (call.type !== "function") continue;
-        console.log(`[tool] ${call.function.name} ${call.function.arguments.slice(0, 200)}`);
-        const result = await this.deps.tools.dispatch(call.function.name, call.function.arguments);
-        full.push({ role: "tool", tool_call_id: call.id, content: result });
-      }
-    }
-    return "(stopped: reached the tool-iteration limit)";
+    const answer = stripThought(String(result ?? "")) || "(empty response)";
+    return answer;
   }
 }
