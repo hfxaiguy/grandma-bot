@@ -170,14 +170,25 @@ async function loadFromFile(cwd: string): Promise<ModelRegistry | null> {
 }
 
 function fromEnv(): ModelRegistry {
+  const model = process.env.LLM_MODEL ?? "gemma4:31b-cloud";
+  const transform = /gemma.?4/i.test(model) ? BUILTIN_TRANSFORMS.gemma4Thinking : undefined;
+
+  // If OLLAMA_API_KEY is set, use native Ollama cloud (direct to
+  // https://ollama.com, no local server needed). Otherwise fall back
+  // to the legacy LLM_BASE_URL / LLM_API_KEY vars (OpenAI-compat).
+  const ollamaKey = process.env.OLLAMA_API_KEY;
+  if (ollamaKey) {
+    return {
+      cheap: { baseURL: "https://ollama.com", apiKey: ollamaKey, model, transform, protocol: "ollama" as const },
+      strong: { baseURL: "https://ollama.com", apiKey: ollamaKey, model, transform, protocol: "ollama" as const },
+    };
+  }
+
   const baseURL = (process.env.LLM_BASE_URL ?? "http://127.0.0.1:11434/v1").replace(/\/$/, "");
   const apiKey = process.env.LLM_API_KEY ?? "ollama";
-  const model = process.env.LLM_MODEL ?? "gemma4:31b-cloud";
   // Both slots point at the same model so the pattern's .model('cheap'|'strong')
   // references always resolve, even when the user hasn't pulled a separate
   // small model. They can edit models.json to split them.
-  // Auto-detect Gemma 4 models and apply the channel-thinking transform.
-  const transform = /gemma.?4/i.test(model) ? BUILTIN_TRANSFORMS.gemma4Thinking : undefined;
   return {
     cheap: { baseURL, apiKey, model, transform },
     strong: { baseURL, apiKey, model, transform },

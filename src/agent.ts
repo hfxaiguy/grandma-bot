@@ -26,22 +26,25 @@ export interface AgentDeps {
 // The content arriving at runTurn is already clean.
 
 /**
- * Ping the LLM endpoint's OpenAI-compatible /models route. Returns true on
- * any 2xx, false on transport error or non-2xx. Used at startup so a missing
- * Ollama/llama-server is surfaced as a warning instead of a cryptic first-
- * message failure.
+ * Ping the LLM endpoint to check reachability. Returns true on any 2xx,
+ * false on transport error or non-2xx. Used at startup so a missing
+ * Ollama/llama-server is surfaced as a warning instead of a cryptic
+ * first-message failure.
  *
- * `entry` is a single { baseURL, apiKey } slice of the registry.
+ * For OpenAI-compat endpoints, pings `/models`. For native Ollama
+ * (`protocol: "ollama"`), pings `/api/tags`.
  */
 export async function checkLlmEntry(
   baseURL: string,
   apiKey: string,
+  protocol?: string,
   timeoutMs = 3000,
 ): Promise<boolean> {
+  const path = protocol === "ollama" ? "/api/tags" : "/models";
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
-    const res = await fetch(`${baseURL.replace(/\/$/, "")}/models`, {
+    const res = await fetch(`${baseURL.replace(/\/$/, "")}${path}`, {
       signal: ctrl.signal,
       headers: apiKey && apiKey !== "no-key" ? { Authorization: `Bearer ${apiKey}` } : {},
     });

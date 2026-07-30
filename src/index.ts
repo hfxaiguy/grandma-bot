@@ -25,7 +25,7 @@ async function main(): Promise<void> {
   const history = new HistoryStore(config.historyLimit);
 
   const modelReachable = await Promise.all(
-    Object.entries(models).map(async ([name, m]) => [name, await checkLlmEntry(m.baseURL, m.apiKey)] as const),
+    Object.entries(models).map(async ([name, m]) => [name, await checkLlmEntry(m.baseURL, m.apiKey, m.protocol)] as const),
   );
   for (const [name, ok] of modelReachable) {
     if (!ok) {
