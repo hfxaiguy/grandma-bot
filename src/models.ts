@@ -1,27 +1,26 @@
-// Model registry loader. Reads `models.json` from the working directory if
-// present, otherwise builds a single-entry registry from the LLM_BASE_URL /
-// LLM_API_KEY / LLM_MODEL env vars (legacy single-backend path).
+// Model registry loader. Reads `models.json` from the working directory;
+// throws if the file is absent.
 //
-// Each entry has the OpenAI-compatible shape grandma-kat expects:
-//   { baseURL: string, apiKey: string, model: string, transform?: string }
+// Each entry has the shape grandma-kat expects:
+//   { baseURL, apiKey, model, transform?, protocol? }
 //
-// String values are interpolated against process.env: "${HF_TOKEN}" becomes
-// whatever HF_TOKEN is. Use "$$" for a literal "$". Missing vars are left
-// as the empty string (so a stray "${}" yields "", not "undefined").
+// String values are interpolated against process.env: "${OLLAMA_API_KEY}"
+// becomes whatever OLLAMA_API_KEY is in .env. Use "$$" for a literal "$".
+// Missing vars are left as the empty string.
 //
-// The `transform` field is an optional response-transform name. It
-// references a built-in function that runs inside grandma-kat's llm.mjs
-// AFTER the library's own thinking-model handling (</think> extraction) but
-// BEFORE the response reaches the runner. This is where model-specific
-// tag formats go — e.g. Gemma 4's <|channel>thought…<channel|>.
+// The `transform` field is an optional response-transform name (built-in).
+// It runs inside grandma-kat's llm.mjs AFTER the library's own
+// thinking-model handling (</think> extraction) and BEFORE the response
+// reaches the runner. Available built-ins:
+//   "gemma4Thinking" — strips Gemma 4's <|channel>thought…<channel|>
+//                      tags from content, populates reasoning field.
 //
-// Available built-in transforms:
-//   "gemma4Thinking"  — strips Gemma 4 channel-wrapped thinking tags
-//                       from content and populates the reasoning field.
+// The `protocol` field selects the LLM call protocol:
+//   undefined (default) — OpenAI-compatible /chat/completions
+//   "ollama"            — Ollama native /api/chat (for https://ollama.com)
 //
-// The pattern in src/patterns/agent.ts always references named slots
-// "cheap" and "strong". If the user supplies only the env-var path, both
-// slots point to the same model.
+// The pattern in src/patterns/agent.ts references named slots "cheap" and
+// "strong"; both must be present in models.json.
 
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -169,34 +168,11 @@ async function loadFromFile(cwd: string): Promise<ModelRegistry | null> {
   return out;
 }
 
-function fromEnv(): ModelRegistry {
-  const model = process.env.LLM_MODEL ?? "gemma4:31b-cloud";
-  const transform = /gemma.?4/i.test(model) ? BUILTIN_TRANSFORMS.gemma4Thinking : undefined;
-
-  // If OLLAMA_API_KEY is set, use native Ollama cloud (direct to
-  // https://ollama.com, no local server needed). Otherwise fall back
-  // to the legacy LLM_BASE_URL / LLM_API_KEY vars (OpenAI-compat).
-  const ollamaKey = process.env.OLLAMA_API_KEY;
-  if (ollamaKey) {
-    return {
-      cheap: { baseURL: "https://ollama.com", apiKey: ollamaKey, model, transform, protocol: "ollama" as const },
-      strong: { baseURL: "https://ollama.com", apiKey: ollamaKey, model, transform, protocol: "ollama" as const },
-    };
-  }
-
-  const baseURL = (process.env.LLM_BASE_URL ?? "http://127.0.0.1:11434/v1").replace(/\/$/, "");
-  const apiKey = process.env.LLM_API_KEY ?? "ollama";
-  // Both slots point at the same model so the pattern's .model('cheap'|'strong')
-  // references always resolve, even when the user hasn't pulled a separate
-  // small model. They can edit models.json to split them.
-  return {
-    cheap: { baseURL, apiKey, model, transform },
-    strong: { baseURL, apiKey, model, transform },
-  };
-}
-
 export async function loadModels(cwd = process.cwd()): Promise<ModelRegistry> {
   const fromFile = await loadFromFile(cwd);
   if (fromFile) return fromFile;
-  return fromEnv();
+  throw new Error(
+    "models.json not found. Copy models.example.json to models.json and edit it. " +
+      "Secrets can use ${ENV_VAR} interpolation (e.g. ${OLLAMA_API_KEY}).",
+  );
 }

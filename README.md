@@ -120,31 +120,17 @@ independent of the harness.
    ```
    To use a different model, download it and set `WHISPER_MODEL` in `.env`
    (used by `npm run whisper:up`).
-5. **LLM backend** — the agent uses **per-step model selection** via
-   `models.json` (a named registry of OpenAI-compatible endpoints). Two
-   slots are referenced from the pattern: `cheap` (routing + direct
-   answers) and `strong` (the tool-using loop). Copy `models.example.json`
-   to `models.json` and edit; secrets can use `${ENV_VAR}` interpolation.
-   If `models.json` is absent, both slots fall back to the single
-   `LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL` in `.env` (Hugging Face router
-   by default). Bot startup pings each registered model and prints
+5. **LLM backend** — copy `models.example.json` to `models.json` and edit.
+   The file defines two named slots the agent pattern uses: `cheap` (routing
+   + direct answers) and `strong` (the tool-using loop). Each entry has
+   `baseURL`, `apiKey`, `model`, and optional `transform` / `protocol`
+   fields. Secrets use `${ENV_VAR}` interpolation from `.env`.
+   Bot startup pings each registered model and prints
    `reachable` / `NOT reachable` per entry.
-    Alternatives (see commented blocks in `.env.example`):
-    - local: build [llama.cpp](https://github.com/ggml-org/llama.cpp) with
-      `-DGGML_VULKAN=ON` and run `llama-server -m model.gguf --jinja -c 8192`
-      (`--jinja` needed so the chat template renders tools), or
-    - [Ollama](https://ollama.com/download) — the local server exposes an
-      OpenAI-compatible API at `http://127.0.0.1:11434/v1`. After installing
-      Ollama and pulling a model, set in `.env`:
-      ```
-      LLM_BASE_URL=http://127.0.0.1:11434/v1
-      LLM_API_KEY=ollama
-      LLM_MODEL=gemma4:31b-cloud
-      ```
-      Run `npm run ollama:up` in another terminal to start the server (it
-      no-ops if Ollama is already running as a service). Tested with
-      `gemma4:31b-cloud` (multimodal, 256K context, tool calling supported).
-    - any other OpenAI-compatible API via `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL`.
+   `models.example.json` ships with native Ollama cloud entries
+   (`protocol: "ollama"`, `baseURL: https://ollama.com`) — just set
+   `OLLAMA_API_KEY` in `.env` and you're done. For other providers
+   (HF router, local llama.cpp, OpenAI, etc.) edit the entries directly.
 
    Note: small local models vary a lot in tool-calling quality — if the agent
    misuses tools, switch models before debugging anything else.
