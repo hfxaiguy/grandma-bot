@@ -2,8 +2,9 @@ import fs from "node:fs/promises";
 import { config } from "./config.js";
 import { ensureRepo } from "./tools/git.js";
 import { ToolRegistry } from "./tools/index.js";
-import { Agent, checkLlm } from "./agent.js";
+import { Agent, checkLlmEntry } from "./agent.js";
 import { HistoryStore } from "./history.js";
+import { loadModels } from "./models.js";
 import { createBot } from "./bot.js";
 import { checkStt } from "./stt.js";
 
@@ -13,21 +14,19 @@ async function main(): Promise<void> {
   await ensureRepo(config.workspaceDir);
 
   const tools = new ToolRegistry(config.workspaceDir, config.allowedCommands);
-  const agent = new Agent({
-    baseURL: config.llmBaseUrl,
-    apiKey: config.llmApiKey,
-    model: config.llmModel,
-    workspace: config.workspaceDir,
-    tools,
-    maxToolIterations: config.maxToolIterations,
-  });
+  const models = await loadModels();
+  const agent = new Agent({ models, workspace: config.workspaceDir, tools });
   const history = new HistoryStore(config.historyLimit);
 
-  const llmOk = await checkLlm(config.llmBaseUrl, config.llmApiKey);
-  if (!llmOk) {
-    console.warn(
-      `[warn] LLM endpoint not reachable at ${config.llmBaseUrl} — first message will fail until it's up.`,
-    );
+  const modelReachable = await Promise.all(
+    Object.entries(models).map(async ([name, m]) => [name, await checkLlmEntry(m.baseURL, m.apiKey)] as const),
+  );
+  for (const [name, ok] of modelReachable) {
+    if (!ok) {
+      console.warn(
+        `[warn] LLM "${name}" (${models[name].model} @ ${models[name].baseURL}) not reachable.`,
+      );
+    }
   }
 
   const sttUrl = config.sttBackend === "sherpa" ? config.sherpaUrl : config.whisperUrl;
@@ -47,8 +46,7 @@ async function main(): Promise<void> {
     whisperUrl: config.whisperUrl,
     sherpaUrl: config.sherpaUrl,
     sttLanguage: config.sttLanguage,
-    llmBaseUrl: config.llmBaseUrl,
-    llmModel: config.llmModel,
+    models,
     agent,
     history,
   });
@@ -60,7 +58,10 @@ async function main(): Promise<void> {
     onStart: (me) => {
       console.log(`grandma-bot up as @${me.username}`);
       console.log(`workspace : ${config.workspaceDir} (git auto-commit on)`);
-      console.log(`llm       : ${config.llmModel} @ ${config.llmBaseUrl} ${llmOk ? "(reachable)" : "(NOT reachable)"}`);
+      for (const [name, m] of Object.entries(models)) {
+        const reachable = modelReachable.find(([n]) => n === name)?.[1];
+        console.log(`llm ${name.padEnd(6)} : ${m.model} @ ${m.baseURL} ${reachable ? "(reachable)" : "(NOT reachable)"}`);
+      }
       console.log(`stt       : ${config.sttBackend} @ ${sttUrl} ${sttOk ? "(reachable)" : "(NOT reachable)"}`);
       console.log(`users     : ${[...config.allowedUserIds].join(", ")}`);
     },

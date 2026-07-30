@@ -1,27 +1,23 @@
-// Agent pattern — a grandma-kat tree that mirrors the previous
-// open-ended tool-calling loop in `agent.ts`:
+// Agent pattern — a grandma-kat tree that picks one of two paths per turn
+// based on a cheap-model classification of the user's latest message:
 //
-//   1. Call the LLM with the full message history + system prompt.
-//   2. If the model returned tool_calls, the runner executes them once and
-//      stores the results in the prompt's record (`m.raw.prev[N].toolResults`).
-//      We append the assistant message + tool results to `m.messages`.
-//   3. Loop until the last LLM call had no tool calls (final answer), bounded
-//      by `max(12)` to match the previous `maxToolIterations`.
+//   1. "classify" branch (cheap model) — reads the full conversation history,
+//      answers ONE word: "tools" or "direct". Value lands in m.branch.classify.
+//   2. If "direct": "direct" branch (cheap model) — answer without tools.
+//   3. If "tools":  "tools"  branch (strong model) — full tool-using loop:
+//      prompt → memoryUpdate(msgs) → memory(msgs_out) → until(no toolCalls, max(12)).
 //
-// Per-pass child order:
-//   #0  prompt(...)                                  — LLM call + tool execution
-//   #1  memoryUpdate("messages", ...)               — append this turn's exchange
-//   #2  memory("final", m => m.prev[1])             — capture the prompt's text
+// Each branch owns a LOCAL "msgs" slot seeded from the root's m.messages,
+// and exports the final messages array (root.slots["direct"|"tools"]). The
+// agent extracts the last assistant message's content as the user-visible
+// text and copies the array back onto the caller's history.
 //
-// At the until check, `m.raw.prev[0]` is the prompt's record from this pass
-// (its `.toolCalls` tells us whether to loop). After the until exits, the
-// tree's exported value is `m.prev[0]` = the "final" memory write = the
-// prompt's text content.
-//
-// Memory note: `messages` is threaded by the caller. We pass the live array
-// reference in via `memory: { messages }`; on each pass the memoryUpdate
-// replaces it with a new array containing the prior value plus this turn's
-// exchange. The caller copies the final array back onto its own history.
+// Why local "msgs" instead of memoryUpdate("messages", ...): the runner's
+// record() writes the memoryUpdate's return value to the local scope, so
+// when a NESTED memoryUpdate targets an ancestor slot (the root's
+// "messages"), the local scope accumulates a divergent copy after pass 1
+// and the walker's pass-2 lookup hits the local. Owning the slot in the
+// branch avoids the shadow entirely.
 //
 // @ts-ignore — grandma-kat ships no .d.ts files.
 import { Tree, when, goback, max } from "grandma-kat";
@@ -40,6 +36,10 @@ const TOOL_NAMES = [
   "delete_file",
   "run_command",
 ] as const;
+
+const CLASSIFY_SYSTEM = `Decide whether the user's latest message needs workspace tools (file editing, shell commands, git operations) or can be answered with text alone.
+
+Answer with EXACTLY one word: "tools" or "direct".`;
 
 // m.raw.prev[i].toolCalls as grandma-kat stores them: { id, name, arguments }.
 interface KatToolCall {
@@ -71,17 +71,67 @@ function toToolResultString(tr: KatToolResult | undefined): string {
   return typeof tr.result === "string" ? tr.result : JSON.stringify(tr.result ?? "");
 }
 
-export const agentPattern = Tree.name("agent")
-  .model("default")
-  .tools(...TOOL_NAMES)
-  .prompt((m: { system?: unknown; messages?: unknown }) => {
-    const system = typeof m.system === "string" ? m.system : "";
-    const history = Array.isArray(m.messages) ? (m.messages as ChatCompletionMessageParam[]) : [];
-    return [{ role: "system", content: system }, ...history];
+function readSystem(m: { system?: unknown }): string {
+  return typeof m.system === "string" ? m.system : "";
+}
+
+function readRootMessages(m: { messages?: unknown }): ChatCompletionMessageParam[] {
+  return Array.isArray(m.messages) ? (m.messages as ChatCompletionMessageParam[]) : [];
+}
+
+function readLocalMsgs(m: { branch: { msgs?: unknown } }): ChatCompletionMessageParam[] {
+  return Array.isArray(m.branch.msgs) ? (m.branch.msgs as ChatCompletionMessageParam[]) : [];
+}
+
+/** Normalize the classify answer for the when() gate (case + trailing punctuation). */
+function readClassifyDecision(m: { branch: { classify?: unknown } }): "tools" | "direct" | null {
+  const a = String(m.branch.classify ?? "").trim().toLowerCase().replace(/[.!?,]+$/g, "");
+  return a === "tools" || a === "direct" ? a : null;
+}
+
+const classifyBranch = Tree.name("classify")
+  .model("cheap")
+  .prompt((m: { messages?: unknown }) => [
+    { role: "system", content: CLASSIFY_SYSTEM },
+    ...readRootMessages(m),
+  ])
+  .check(
+    (m: { prev: unknown[] }) => {
+      const a = String(m.prev[0] ?? "").trim().toLowerCase().replace(/[.!?,]+$/g, "");
+      if (a === "tools" || a === "direct") return true;
+      return 'Answer with EXACTLY one word: "tools" or "direct".';
+    },
+    goback(1, max(2, (m: { error?: unknown }) => `classify never answered validly: ${m.error}`)),
+  );
+
+const directBranch = Tree.name("direct")
+  .model("cheap")
+  .memory("msgs", (m: { messages?: unknown }, cur: unknown) =>
+    Array.isArray(cur) ? cur : readRootMessages(m),
+  )
+  .prompt((m: { system?: unknown }) => [
+    { role: "system", content: readSystem(m) },
+    ...readLocalMsgs(m as { branch: { msgs?: unknown } }),
+  ])
+  .memoryUpdate("msgs", (m: { raw: { prev: KatPromptRecord[] }; branch: { msgs?: unknown } }, cur: unknown) => {
+    const prev = Array.isArray(cur) ? (cur as ChatCompletionMessageParam[]) : readLocalMsgs(m);
+    const r = m.raw.prev[0];
+    return [...prev, { role: "assistant", content: r?.content ?? "" }];
   })
-  .memoryUpdate("messages", (m: { raw: { prev: KatPromptRecord[] } }, cur: unknown) => {
-    const prev = Array.isArray(cur) ? (cur as ChatCompletionMessageParam[]) : [];
-    // m.raw.prev[0] at this point is the prompt's record (just ran above us).
+  .memory("msgs_out", (m: { branch: { msgs?: unknown } }) => readLocalMsgs(m));
+
+const toolsBranch = Tree.name("tools")
+  .model("strong")
+  .tools(...TOOL_NAMES)
+  .memory("msgs", (m: { messages?: unknown }, cur: unknown) =>
+    Array.isArray(cur) ? cur : readRootMessages(m),
+  )
+  .prompt((m: { system?: unknown }) => [
+    { role: "system", content: readSystem(m) },
+    ...readLocalMsgs(m as { branch: { msgs?: unknown } }),
+  ])
+  .memoryUpdate("msgs", (m: { raw: { prev: KatPromptRecord[] }; branch: { msgs?: unknown } }, cur: unknown) => {
+    const prev = Array.isArray(cur) ? (cur as ChatCompletionMessageParam[]) : readLocalMsgs(m);
     const r = m.raw.prev[0];
     if (r?.toolCalls?.length) {
       const assistant: ChatCompletionAssistantMessageParam = {
@@ -96,14 +146,35 @@ export const agentPattern = Tree.name("agent")
       }));
       return [...prev, assistant, ...toolMsgs];
     }
-    // No tool calls — final assistant text for this turn.
     return [...prev, { role: "assistant", content: r?.content ?? "" }];
   })
-  .memory("final", (m: { prev: unknown[] }) => m.prev[1] as string)
+  .memory("msgs_out", (m: { branch: { msgs?: unknown } }) => readLocalMsgs(m))
   .until(
     (m: { raw: { prev: KatPromptRecord[] } }) => !m.raw.prev[2]?.toolCalls?.length,
     max(12, (m: { error?: unknown }) => `tool-iteration limit: ${m.error ?? "stuck"}`),
   );
+
+export const agentPattern = Tree.name("agent")
+  .branch(classifyBranch)
+  .branch(
+    when((m: { branch: { classify?: unknown } }) => readClassifyDecision(m) === "direct"),
+    directBranch,
+  )
+  .branch(
+    when((m: { branch: { classify?: unknown } }) => readClassifyDecision(m) === "tools"),
+    toolsBranch,
+  );
+
+/** Walk the runner's messages array (root.slots["direct"|"tools"]) to the
+ *  final assistant text. Returns "" if no assistant message found. */
+export function extractFinalText(messages: unknown): string {
+  if (!Array.isArray(messages)) return "";
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i] as ChatCompletionMessageParam;
+    if (m?.role === "assistant" && typeof m.content === "string") return m.content;
+  }
+  return "";
+}
 
 // Re-export markers so callers can compose or extend the pattern.
 export { when, goback, max };

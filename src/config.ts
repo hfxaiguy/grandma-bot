@@ -28,9 +28,6 @@ export const config = {
   ),
   workspaceDir: path.resolve(root, process.env.WORKSPACE_DIR ?? "workspace"),
   tmpDir: path.resolve(root, "tmp"),
-  llmBaseUrl: (process.env.LLM_BASE_URL ?? "http://127.0.0.1:8080/v1").replace(/\/$/, ""),
-  llmApiKey: process.env.LLM_API_KEY ?? "local",
-  llmModel: process.env.LLM_MODEL ?? "local",
   /** STT backend: "whisper" (whisper.cpp server) or "sherpa" (sherpa-onnx HTTP server). */
   sttBackend: ((process.env.STT_BACKEND ?? "whisper").toLowerCase() === "sherpa" ? "sherpa" : "whisper") as "whisper" | "sherpa",
   whisperUrl: (process.env.WHISPER_URL ?? "http://127.0.0.1:8178").replace(/\/$/, ""),

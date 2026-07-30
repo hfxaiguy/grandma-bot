@@ -3,6 +3,7 @@ import type { Context } from "grammy";
 import type { ChatCompletionUserMessageParam } from "openai/resources/chat/completions";
 import type { Agent } from "./agent.js";
 import type { HistoryStore } from "./history.js";
+import type { ModelRegistry } from "./models.js";
 import { transcribeVoice, type SttBackend } from "./stt.js";
 import { git } from "./tools/git.js";
 
@@ -15,8 +16,8 @@ export interface BotDeps {
   whisperUrl: string;
   sherpaUrl: string;
   sttLanguage: string;
-  llmBaseUrl: string;
-  llmModel: string;
+  /** Named model registry; the bot's /status command shows all entries. */
+  models: ModelRegistry;
   agent: Agent;
   history: HistoryStore;
 }
@@ -93,7 +94,8 @@ export function createBot(deps: BotDeps): Bot {
       [
         `workspace: ${deps.workspace}`,
         `git: ${gitLine}`,
-        `llm: ${deps.llmModel} @ ${deps.llmBaseUrl}`,
+        `llm models:`,
+        ...Object.entries(deps.models).map(([name, m]) => `  ${name}: ${m.model} @ ${m.baseURL}`),
         `stt: ${deps.sttBackend}${deps.sttBackend === "sherpa" ? ` @ ${deps.sherpaUrl}` : ` @ ${deps.whisperUrl}`}`,
       ].join("\n"),
     );
@@ -113,7 +115,10 @@ export function createBot(deps: BotDeps): Bot {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[agent]", err);
-      await reply(ctx, `Something went wrong: ${msg}\n(llm backend: ${deps.llmBaseUrl})`);
+      const backendList = Object.entries(deps.models)
+        .map(([n, m]) => `${n}=${m.baseURL}`)
+        .join(", ");
+      await reply(ctx, `Something went wrong: ${msg}\n(llm backends: ${backendList})`);
     } finally {
       clearInterval(typing);
     }

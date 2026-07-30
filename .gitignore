@@ -7,3 +7,4 @@ workspace/
 nohup.out
 tmp/
 logs/
+models.json

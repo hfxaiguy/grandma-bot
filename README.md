@@ -120,14 +120,15 @@ independent of the harness.
    ```
    To use a different model, download it and set `WHISPER_MODEL` in `.env`
    (used by `npm run whisper:up`).
-5. **LLM backend** — Hugging Face router by default (already set in `.env.example`):
-   create a token at https://huggingface.co/settings/tokens with
-   *Inference Providers* permission and paste it as `LLM_API_KEY`.
-   Default model is `google/gemma-4-26B-A4B-it:novita` — multimodal (photos work)
-   with tool calling. **Caution:** tool support is per-provider; e.g. Gemma 4 on
-   DeepInfra has it disabled. Check `supports_tools` at
-   https://router.huggingface.co/v1/models before changing `LLM_MODEL`.
-   `openai/gpt-oss-120b:deepinfra` is a cheap text-only alternative.
+5. **LLM backend** — the agent uses **per-step model selection** via
+   `models.json` (a named registry of OpenAI-compatible endpoints). Two
+   slots are referenced from the pattern: `cheap` (routing + direct
+   answers) and `strong` (the tool-using loop). Copy `models.example.json`
+   to `models.json` and edit; secrets can use `${ENV_VAR}` interpolation.
+   If `models.json` is absent, both slots fall back to the single
+   `LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL` in `.env` (Hugging Face router
+   by default). Bot startup pings each registered model and prints
+   `reachable` / `NOT reachable` per entry.
     Alternatives (see commented blocks in `.env.example`):
     - local: build [llama.cpp](https://github.com/ggml-org/llama.cpp) with
       `-DGGML_VULKAN=ON` and run `llama-server -m model.gguf --jinja -c 8192`

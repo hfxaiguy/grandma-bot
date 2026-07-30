@@ -10,22 +10,18 @@ import path from "node:path";
 import { config } from "../src/config.js";
 import { ToolRegistry } from "../src/tools/index.js";
 import { Agent } from "../src/agent.js";
+import { loadModels } from "../src/models.js";
 import { ensureRepo, git } from "../src/tools/git.js";
 
 const ws = await fs.mkdtemp(path.join(os.tmpdir(), "grandma-llm-test-"));
 await ensureRepo(ws);
 
 const tools = new ToolRegistry(ws, config.allowedCommands);
-const agent = new Agent({
-  baseURL: config.llmBaseUrl,
-  apiKey: config.llmApiKey,
-  model: config.llmModel,
-  workspace: ws,
-  tools,
-  maxToolIterations: 6,
-});
+const models = await loadModels();
+const agent = new Agent({ models, workspace: ws, tools });
 
-console.log(`model: ${config.llmModel} @ ${config.llmBaseUrl}`);
+const strong = models.strong ?? models.default ?? Object.values(models)[0];
+console.log(`model: ${strong?.model} @ ${strong?.baseURL}`);
 const messages: Parameters<Agent["runTurn"]>[0] = [
   { role: "user", content: "Create a file called hello.txt containing exactly: hello from the agent. Then tell me when done." },
 ];

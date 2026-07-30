@@ -3,15 +3,14 @@ import path from "node:path";
 import grandma from "grandma-kat";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import type { ToolRegistry } from "./tools/index.js";
-import { agentPattern } from "./patterns/agent.js";
+import type { ModelRegistry } from "./models.js";
+import { agentPattern, extractFinalText } from "./patterns/agent.js";
 
 export interface AgentDeps {
-  baseURL: string;
-  apiKey: string;
-  model: string;
+  /** Named LLM registry (e.g. { cheap, strong }) from models.json or env. */
+  models: ModelRegistry;
   workspace: string;
   tools: ToolRegistry;
-  maxToolIterations: number;
 }
 
 /**
@@ -29,11 +28,17 @@ const LOG_DB = path.resolve(process.cwd(), "logs/grandma-kat.db");
  * any 2xx, false on transport error or non-2xx. Used at startup so a missing
  * Ollama/llama-server is surfaced as a warning instead of a cryptic first-
  * message failure.
+ *
+ * `entry` is a single { baseURL, apiKey } slice of the registry.
  */
-export async function checkLlm(baseURL: string, apiKey: string): Promise<boolean> {
+export async function checkLlmEntry(
+  baseURL: string,
+  apiKey: string,
+  timeoutMs = 3000,
+): Promise<boolean> {
   try {
     const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 3000);
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
     const res = await fetch(`${baseURL.replace(/\/$/, "")}/models`, {
       signal: ctrl.signal,
       headers: apiKey && apiKey !== "no-key" ? { Authorization: `Bearer ${apiKey}` } : {},
@@ -65,32 +70,36 @@ export class Agent {
    * Run one conversational turn: appends to `messages` (which must not include
    * the system message) until the model produces a final text answer.
    *
-   * The control flow is now a grandma-kat tree (`patterns/agent.ts`): the
-   * runner handles prompt → tool execution → history append → loop, bounded
-   * by `max(maxToolIterations)`. Every LLM call, tool call, and flow-control
-   * decision is logged to `logs/grandma-kat.db`.
+   * The control flow is a grandma-kat tree (`patterns/agent.ts`): a cheap
+   * model classifies the latest user message as "direct" or "tools"; the
+   * former is answered by the cheap model, the latter runs the full
+   * tool-using loop on the strong model. The pattern's value is the
+   * updated messages array (root.slots["direct"|"tools"]); we extract the
+   * last assistant text and copy the array back onto the caller's history.
+   * Every LLM call, tool call, and flow-control decision is logged to
+   * `logs/grandma-kat.db`.
    */
   async runTurn(messages: ChatCompletionMessageParam[]): Promise<string> {
     const { result, memory } = await grandma.knit(agentPattern, {
-      models: {
-        default: { baseURL: this.deps.baseURL, apiKey: this.deps.apiKey, model: this.deps.model },
-      },
+      models: this.deps.models,
       tools: this.deps.tools.toKatTools(),
-      // Pass the live array reference; the pattern replaces it with a new
-      // array each pass as it appends tool exchanges. We copy back below.
       memory: { messages, system: this.systemPrompt },
       logger: LOG_DB,
       logLevel: "info",
     });
 
-    // Copy the updated history back onto the caller's array (same reference
-    // the HistoryStore holds). Drop the `system` field — it lives only in
-    // runtime memory, never in conversation history.
-    const updated = (memory as { messages: ChatCompletionMessageParam[] }).messages;
-    messages.length = 0;
-    messages.push(...updated);
+    // The tree's exported value is whichever of "direct"/"tools" ran — both
+    // branches export the updated messages array. Fall back to the caller's
+    // input if neither produced a value (defensive).
+    const updated =
+      (memory as { direct?: unknown }).direct ??
+      (memory as { tools?: unknown }).tools ??
+      messages;
 
-    const answer = stripThought(String(result ?? "")) || "(empty response)";
-    return answer;
+    messages.length = 0;
+    messages.push(...(updated as ChatCompletionMessageParam[]));
+
+    const text = stripThought(extractFinalText(updated)) || "(empty response)";
+    return text;
   }
 }
