@@ -83,22 +83,50 @@ every change it makes is **git-committed automatically**.
 ```
 src/
   index.ts        entry point: workspace + git init, wiring, bot startup
-  config.ts       .env loading/validation
+  config.ts       .env loading/validation (non-model config only)
+  models.ts       models.json loader, built-in transforms
   bot.ts          grammY bot: auth gate, forum topics, text/voice/photo, queues
   agent.ts        LLM tool-calling loop (OpenAI-compatible)
   history.ts      per-topic in-memory conversation history
   stt.ts          Telegram voice download → ffmpeg → whisper-server
+  patterns/
+    shared.ts     types (KatPromptRecord), memory-view accessors, history helpers
+    classify.ts   classify branch — cheap model: "tools" or "direct"
+    direct.ts     direct branch — cheap model: text-only answer
+    tools.ts      tools branch — strong model: tool-using loop
+    agent.ts      root tree — imports and composes the three branches
   tools/
     index.ts      tool schemas (OpenAI format) + dispatcher
     files.ts      list/read/write/edit/delete, sandboxed, auto-committing
     shell.ts      run_command with allowlist + git deny-list
-    git.ts        repo init + auto-commit helpers
+    git.ts        repo init + auto-commit + workspace .gitignore helpers
   util/paths.ts   workspace path sandbox
 scripts/
   smoke.ts        offline tests: tools, sandbox, auto-commit
+  agent-mock-test.ts  mock-LLM test of both pattern paths (tools/direct)
   llm-test.ts     live end-to-end agent test against the configured LLM
 vendor/whisper.cpp/   whisper.cpp Vulkan build (gitignored)
 ```
+
+### Design principle: branches are standalone trees
+
+Each branch in the agent pattern lives in its own file under `src/patterns/`
+and exports a single `Tree.name(...)` definition. The root tree in
+`patterns/agent.ts` imports the branches it needs and composes them with
+`.branch()` and `when()` gates. There is no registry, no runtime discovery,
+no plugin system — just imports and composition.
+
+To add a new behavior to the agent:
+
+1. Create `src/patterns/my-branch.ts`, export a named `Tree`.
+2. Import it in `src/patterns/agent.ts`.
+3. `.branch()` it onto the root (with a `when()` gate if conditional).
+
+Branches never import each other. If a branch needs something from another
+branch, it reads from the grandma-kat memory scope chain (e.g.
+`m.branch.classify`), not by importing the sibling. The branches are plain
+values; the tree is plain data. Shared types and helpers live in
+`patterns/shared.ts`.
 
 The **workspace** (agent sandbox + git repo) lives OUTSIDE the project by default
 (`~/grandma-workspace`, see `WORKSPACE_DIR`) so its git history is fully
