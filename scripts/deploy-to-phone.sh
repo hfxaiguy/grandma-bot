@@ -311,12 +311,24 @@ pkg update -y
 note "pkg upgrade (may be skipped if up to date)"
 pkg upgrade -y || true
 note "installing runtime packages"
-# glibc-repo adds a repo containing glibc-linked packages; glibc itself
-# then provides the loader needed to run the sherpa-onnx prebuilt.
-# glibc-repo MUST be installed and pkg update re-run before glibc appears.
-pkg install -y git nodejs-lts ffmpeg tmux openssl-tool glibc-repo
-pkg update -y
-pkg install -y glibc
+pkg install -y git nodejs-lts ffmpeg tmux openssl-tool
+
+# Install glibc dynamic linker for glibc-linked binaries (sherpa-onnx).
+# OpenClaw approach: use glibc-runner from pacman (simpler than
+# glibc-repo + glibc via pkg). Falls back to pkg if pacman fails.
+# WHY: glibc binaries read /etc/resolv.conf for DNS, but Android
+# doesn't have one. Bionic-linked binaries (like Termux's nodejs-lts)
+# use Android's resolver directly, but glibc binaries don't.
+# We fix DNS separately by writing $PREFIX/etc/resolv.conf (see above).
+note "installing glibc dynamic linker"
+if pacman -S --noconfirm glibc-runner 2>/dev/null; then
+  note "glibc-runner installed via pacman"
+else
+  note "pacman failed, falling back to glibc-repo + glibc via pkg"
+  pkg install -y glibc-repo
+  pkg update -y
+  pkg install -y glibc
+fi
 
 # Move staged files into HOME
 note "setting up $HOME"
@@ -426,15 +438,17 @@ note "pattern registry set up at $WORKSPACE_DIR/patterns/"
 # ~/usr/glibc/lib/. The loader doesn't process glibc's libc.so linker
 # script on this Android build, so we have to LD_PRELOAD libc.so.6
 # explicitly to bypass the broken script.
+#
+# Also set TMPDIR: glibc binaries expect /tmp, which doesn't exist on
+# Android. Without this, sherpa-onnx may segfault or fail to create
+# temp files (learned from OpenClaw's Termux approach).
 SHERPA_DIR="$HOME/sherpa-onnx"
 GLIBC_DIR="$HOME/../usr/glibc"
 GLIBC_LOADER="$GLIBC_DIR/lib/ld-linux-aarch64.so.1"
-# sherpa-onnx-offline-websocket-server is the binary with the HTTP
-# /recognize endpoint; sherpa-onnx-offline is CLI-only (no --port).
 SHERPA_BIN="$SHERPA_DIR/bin/sherpa-onnx-offline-websocket-server"
-# Note: we use `env` here because shell variables don't re-parse
-# env-var assignments like LD_PRELOAD=foo cmd.
-SHERPA_RUN="env LD_PRELOAD=$GLIBC_DIR/lib/libc.so.6 $GLIBC_LOADER --library-path $GLIBC_DIR/lib:$SHERPA_DIR/lib $SHERPA_BIN"
+SHERPA_TMP="$HOME/tmp"
+mkdir -p "$SHERPA_TMP"
+SHERPA_RUN="env TMPDIR=$SHERPA_TMP LD_PRELOAD=$GLIBC_DIR/lib/libc.so.6 $GLIBC_LOADER --library-path $GLIBC_DIR/lib:$SHERPA_DIR/lib $SHERPA_BIN"
 # NB: do NOT quote $SHERPA_RUN here — the shell must split it into
 # a command + args, otherwise it tries to run a file named
 # "env LD_PRELOAD=... sherpa-onnx-offline" (with spaces in its name).
@@ -454,7 +468,7 @@ tmux kill-session -t "$SHERPA_SESSION" 2>/dev/null || true
 # Model files are the int8 streaming Zipformer (chunk-16-left-128).
 # The streaming model works fine with the offline-websocket-server for
 # non-streaming use (transcribe a whole audio file at once).
-tmux new-session -d -s "$SHERPA_SESSION" "sh -c 'exec env LD_PRELOAD=\"$GLIBC_DIR/lib/libc.so.6\" \"$GLIBC_LOADER\" --library-path \"$GLIBC_DIR/lib:$SHERPA_DIR/lib\" \"$SHERPA_BIN\" --port=__STT_PORT__ --num-threads=4 --tokens=\"$MODEL_DIR/tokens.txt\" --encoder=\"$MODEL_DIR/encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx\" --decoder=\"$MODEL_DIR/decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx\" --joiner=\"$MODEL_DIR/joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx\" 2>&1 | tee \"$HOME/sherpa.log\"'"
+tmux new-session -d -s "$SHERPA_SESSION" "sh -c 'exec env TMPDIR=\"$SHERPA_TMP\" LD_PRELOAD=\"$GLIBC_DIR/lib/libc.so.6\" \"$GLIBC_LOADER\" --library-path \"$GLIBC_DIR/lib:$SHERPA_DIR/lib\" \"$SHERPA_BIN\" --port=__STT_PORT__ --num-threads=4 --tokens=\"$MODEL_DIR/tokens.txt\" --encoder=\"$MODEL_DIR/encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx\" --decoder=\"$MODEL_DIR/decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx\" --joiner=\"$MODEL_DIR/joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx\" 2>&1 | tee \"$HOME/sherpa.log\"'"
 
 sleep 2
 if curl -sSf -m 3 "http://127.0.0.1:__STT_PORT__/" >/dev/null 2>&1; then
