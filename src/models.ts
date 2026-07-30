@@ -55,6 +55,13 @@ export type ModelEntry = {
   apiKey: string;
   model: string;
   transform?: ModelTransform;
+  /**
+   * Protocol to use when calling the LLM. "ollama" uses Ollama's native
+   * /api/chat endpoint (e.g. for https://ollama.com direct access);
+   * undefined (default) uses the OpenAI-compatible /chat/completions
+   * endpoint. Ignored when a `handler` is present on the model entry.
+   */
+  protocol?: "ollama";
 };
 
 export type ModelRegistry = Record<string, ModelEntry>;
@@ -126,6 +133,11 @@ function normalizeEntry(raw: unknown, name: string): ModelEntry {
       );
     }
     entry.transform = t;
+  }
+  // Wire the protocol. "ollama" uses Ollama's native /api/chat endpoint;
+  // anything else (or absent) uses OpenAI-compatible /chat/completions.
+  if (r.protocol === "ollama") {
+    entry.protocol = "ollama";
   }
   return entry;
 }
