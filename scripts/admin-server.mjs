@@ -1,11 +1,12 @@
 // scripts/admin-server.mjs
 //
 // A tiny zero-dependency admin server for grandma-bob on the phone.
-// Listens on $ADMIN_PORT (default 8181) and serves a small web UI for:
+// Listens on $ADMIN_PORT (default 8080) and serves a small web UI for:
 //   - setting up .env credentials (bot token, user ID, HF API key)
 //   - viewing bot/sherpa tmux status
 //   - tailing bot.log / sherpa.log
 //   - restarting the bot tmux session
+//   - managing tree-runtime patterns (JSON DSL)
 //
 // Started by deploy-to-phone.sh's install.sh in a tmux session, so it
 // survives reboots (as long as tmux is restarted).
@@ -16,7 +17,7 @@
 //   http://10.0.0.2:8181
 
 import http from "node:http";
-import { readFile, writeFile, readdir, stat } from "node:fs/promises";
+import { readFile, writeFile, readdir, stat, mkdir } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -32,6 +33,8 @@ const BOT_LOG = `${HOME}/bot.log`;
 const SHERPA_LOG = `${HOME}/sherpa.log`;
 const BOT_SESSION = "bot";
 const SHERPA_SESSION = "sherpa";
+const WORKSPACE_DIR = process.env.WORKSPACE_DIR || `${HOME}/grandma-workspace`;
+const PATTERNS_DIR = `${WORKSPACE_DIR}/patterns`;
 
 // ----- helpers -----
 async function tmux(args) {
@@ -102,6 +105,51 @@ async function restartBot() {
     "new-session", "-d", "-s", BOT_SESSION,
     `sh -c 'cd "${PROJECT_DIR}" && exec npm run dev 2>&1 | tee "${HOME}/bot.log'`,
   ]);
+}
+
+// ----- pattern registry -----
+async function listPatterns() {
+  try {
+    const files = await readdir(PATTERNS_DIR);
+    const patterns = [];
+    for (const f of files) {
+      if (!f.endsWith(".json")) continue;
+      try {
+        const raw = await readFile(path.join(PATTERNS_DIR, f), "utf8");
+        const p = JSON.parse(raw);
+        patterns.push({
+          file: f,
+          name: p.name || f.replace(/\.json$/, ""),
+          description: p.description || "",
+          root: p.root ? p.root.type : "(unknown)",
+        });
+      } catch (e) {
+        patterns.push({ file: f, name: f, description: `parse error: ${e.message}`, root: "(error)" });
+      }
+    }
+    return patterns;
+  } catch {
+    return [];
+  }
+}
+
+async function readPattern(name) {
+  try {
+    const raw = await readFile(path.join(PATTERNS_DIR, `${name}.json`), "utf8");
+    return JSON.parse(raw);
+  } catch (e) {
+    return null;
+  }
+}
+
+async function writePattern(name, body) {
+  await mkdir(PATTERNS_DIR, { recursive: true });
+  await writeFile(path.join(PATTERNS_DIR, `${name}.json`), JSON.stringify(body, null, 2) + "\n", { mode: 0o644 });
+}
+
+async function deletePattern(name) {
+  const p = path.join(PATTERNS_DIR, `${name}.json`);
+  try { await (await import("node:fs/promises")).unlink(p); } catch {}
 }
 
 // ----- HTML -----
@@ -195,6 +243,26 @@ const HTML = `<!DOCTYPE html>
 </div>
 
 <div class="card">
+  <h2 style="margin-top:0">Tree patterns</h2>
+  <p style="margin:4px 0"><small>JSON tree-runtime patterns for the agent loop. Contributors can write their own in <code>$HOME/grandma-workspace/patterns/</code> and share them.</small></p>
+  <div id="pattern-list">(loading...)</div>
+  <div class="actions">
+    <button class="secondary" onclick="refreshPatterns()">Refresh</button>
+    <button onclick="showNewPattern()">New pattern</button>
+  </div>
+  <div id="pattern-editor" style="display:none; margin-top:12px">
+    <label>Pattern name (no spaces)</label>
+    <input id="p-name" type="text" placeholder="my-pattern">
+    <label>Pattern JSON</label>
+    <pre id="p-json" contenteditable="true" style="min-height:120px; cursor:text"></pre>
+    <div class="actions">
+      <button onclick="savePattern()">Save pattern</button>
+      <button class="secondary" onclick="hideNewPattern()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="card">
   <h2 style="margin-top:0">Access</h2>
   <p style="margin:4px 0"><small>This UI runs on the phone at <code>http://127.0.0.1:${PORT}</code>.</small></p>
   <p style="margin:4px 0"><small>If you're tunneling via gnirehtet, the laptop can reach it at <code>http://10.0.0.2:${PORT}</code>.</small></p>
@@ -260,6 +328,76 @@ async function loadLog(name) {
   } catch {}
 }
 
+async function refreshPatterns() {
+  try {
+    const r = await api("/api/patterns");
+    const list = $("pattern-list");
+    if (r.patterns.length === 0) {
+      list.innerHTML = '<small style="color:var(--muted)">No patterns yet. Click "New pattern" to create one.</small>';
+      return;
+    }
+    list.innerHTML = r.patterns.map(p => {
+      const name = p.name || p.file;
+      const desc = p.description || "(no description)";
+      return \`<div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid #334155">
+        <div>
+          <strong>\${name}</strong> <small style="color:var(--muted)">— \${desc}</small>
+        </div>
+        <div>
+          <button class="secondary" style="padding:4px 8px; font-size:12px" onclick="viewPattern('\${name}')">View</button>
+          <button class="danger" style="padding:4px 8px; font-size:12px" onclick="deletePattern('\${name}')">Delete</button>
+        </div>
+      </div>\`;
+    }).join("");
+  } catch {}
+}
+
+async function viewPattern(name) {
+  try {
+    const r = await api("/api/patterns/" + name);
+    $("p-name").value = r.name || name;
+    $("p-json").textContent = JSON.stringify(r, null, 2);
+    $("pattern-editor").style.display = "block";
+  } catch {}
+}
+
+function showNewPattern() {
+  $("p-name").value = "";
+  $("p-json").textContent = JSON.stringify({
+    name: "my-pattern",
+    description: "A custom tree pattern",
+    root: { type: "llm", model: "cheap", messages: "{{messages}}" }
+  }, null, 2);
+  $("pattern-editor").style.display = "block";
+}
+
+function hideNewPattern() {
+  $("pattern-editor").style.display = "none";
+}
+
+async function savePattern() {
+  const name = $("p-name").value.trim();
+  if (!name) { toast("pattern name required", true); return; }
+  let body;
+  try { body = JSON.parse($("p-json").textContent); } catch (e) { toast("invalid JSON: " + e.message, true); return; }
+  body.name = name;
+  try {
+    await api("/api/patterns", { method: "POST", body: JSON.stringify(body) });
+    toast("pattern saved");
+    hideNewPattern();
+    refreshPatterns();
+  } catch {}
+}
+
+async function deletePattern(name) {
+  if (!confirm(\`Delete pattern "\${name}"?\`)) return;
+  try {
+    await api("/api/patterns/" + name, { method: "DELETE" });
+    toast("pattern deleted");
+    refreshPatterns();
+  } catch {}
+}
+
 setInterval(() => {
   const sec = Math.floor((Date.now() - startedAt) / 1000);
   const m = Math.floor(sec / 60), s = sec % 60;
@@ -267,6 +405,7 @@ setInterval(() => {
 }, 1000);
 
 refreshStatus();
+refreshPatterns();
 </script>
 </body>
 </html>
@@ -326,6 +465,40 @@ const server = http.createServer(async (req, res) => {
       const content = await readTail(path, 60);
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ content }));
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/patterns") {
+      const patterns = await listPatterns();
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ patterns }));
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname.startsWith("/api/patterns/")) {
+      const name = url.pathname.split("/").pop();
+      const p = await readPattern(name);
+      if (!p) { res.writeHead(404); res.end('{"error":"pattern not found"}'); return; }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(p));
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/patterns") {
+      const body = await readBody(req);
+      const p = JSON.parse(body);
+      if (!p.name) { res.writeHead(400); res.end('{"error":"pattern must have a name"}'); return; }
+      await writePattern(p.name, p);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+
+    if (req.method === "DELETE" && url.pathname.startsWith("/api/patterns/")) {
+      const name = url.pathname.split("/").pop();
+      await deletePattern(name);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
       return;
     }
 

@@ -24,6 +24,7 @@ PHONE_TERMUX_HOME="/data/data/com.termux/files/home"
 PHONE_PROJECT_DIR="grandma-bob"
 MODEL_DIR_NAME="sherpa-onnx-streaming-zipformer-en-2023-06-26"
 STAGE_DIR="/sdcard/Download/grandpa-bob-deploy"
+GRANDMA_KAT_URL="${GRANDMA_KAT_URL:-https://github.com/hfxaiguy/grandma-kat.git}"
 
 # ---------- helpers ----------
 note() { printf '\033[1;36m[+]\033[0m %s\n' "$*"; }
@@ -124,8 +125,8 @@ adb_s am start -n com.termux/.app.TermuxActivity >/dev/null 2>&1 || true
 # ---------- ensure the phone has internet ----------
 # Without internet, the in-Termux install.sh can't reach package mirrors,
 # git remotes, or the npm registry. Try to bring the phone online by:
-#   1) switching the USB function to rndis,adb (some Samsungs reject this)
-#   2) opening the tethering settings so the user can tap USB Tethering
+#   1) checking if gnirehtet is already running (tun0 with an IP)
+#   2) switching the USB function to rndis,adb (some Samsungs reject this)
 #   3) starting gnirehtet (a no-root ADB-based reverse-tether that
 #      forwards phone traffic through the laptop's internet)
 phone_has_internet() {
@@ -141,56 +142,61 @@ phone_has_internet() {
 if phone_has_internet; then
   note "phone already has internet"
 else
-  note "phone has no internet — trying USB tethering"
-  adb_s svc usb setFunctions rndis,adb >/dev/null 2>&1 || true
-  sleep 4
-  if ! phone_has_internet; then
-    note "USB function switch didn't take effect — trying gnirehtet reverse-tether"
-
-    # ---- gnirehtet (no-root reverse-tether over ADB) ----
-    GNIREHTET_VERSION="v2.5.1"
-    GNIREHTET_DIR="/tmp/gnirehtet-rust-linux64"
-    GNIREHTET_BIN="$GNIREHTET_DIR/gnirehtet"
-    GNIREHTET_APK="$GNIREHTET_DIR/gnirehtet.apk"
-    if [[ ! -x "$GNIREHTET_BIN" || ! -f "$GNIREHTET_APK" ]]; then
-      note "downloading gnirehtet $GNIREHTET_VERSION"
-      mkdir -p "$GNIREHTET_DIR"
-      curl -sSfL -o /tmp/gnirehtet.zip \
-        "https://github.com/Genymobile/gnirehtet/releases/download/$GNIREHTET_VERSION/gnirehtet-rust-linux64-$GNIREHTET_VERSION.zip"
-      unzip -o /tmp/gnirehtet.zip -d /tmp >/dev/null
-      chmod +x "$GNIREHTET_BIN"
-    fi
-    note "installing gnirehtet client APK on the phone"
-    adb install -r "$GNIREHTET_APK" >/dev/null
-
-    # kill any prior relay, then start a fresh one in the background
-    pkill -f 'gnirehtet run' 2>/dev/null || true
-    sleep 1
-    note "starting gnirehtet relay (port 31416) in background"
-    setsid nohup "$GNIREHTET_BIN" run "$DEVICE_SERIAL" \
-      < /dev/null > /tmp/gnirehtet.log 2>&1 &
-    disown
-    sleep 3
-
+  # Check if gnirehtet is already running on the laptop (tun0 on phone has IP)
+  if adb_s ip -4 addr show tun0 2>/dev/null | grep -q 'inet '; then
+    note "gnirehtet tunnel already up on phone (tun0 has IP) — treating as online"
+  else
+    note "phone has no internet — trying USB tethering"
+    adb_s svc usb setFunctions rndis,adb >/dev/null 2>&1 || true
+    sleep 4
     if ! phone_has_internet; then
-      echo
-      echo "  ┌──────────────────────────────────────────────────────────────────┐"
-      echo "  │  gnirehtet is running but the phone still has no tunnel.        │"
-      echo "  │  ACTION: on the phone, accept the 'Allow gnirehtet to set       │"
-      echo "  │  up a VPN connection?' prompt (check 'I trust this app' if      │"
-      echo "  │  shown, then tap OK). The script will continue automatically.  │"
-      echo "  └──────────────────────────────────────────────────────────────────┘"
-      echo
-      for i in $(seq 60 -5 5); do
-        if phone_has_internet; then
-          printf "\r  phone online via gnirehtet, continuing...      \n"
-          break
-        fi
-        printf "\r  waiting for VPN permission on the phone... %2ds " "$i"
-        sleep 5
-      done
+      note "USB function switch didn't take effect — starting gnirehtet reverse-tether"
+
+      # ---- gnirehtet (no-root reverse-tether over ADB) ----
+      GNIREHTET_VERSION="v2.5.1"
+      GNIREHTET_DIR="/tmp/gnirehtet-rust-linux64"
+      GNIREHTET_BIN="$GNIREHTET_DIR/gnirehtet"
+      GNIREHTET_APK="$GNIREHTET_DIR/gnirehtet.apk"
+      if [[ ! -x "$GNIREHTET_BIN" || ! -f "$GNIREHTET_APK" ]]; then
+        note "downloading gnirehtet $GNIREHTET_VERSION"
+        mkdir -p "$GNIREHTET_DIR"
+        curl -sSfL -o /tmp/gnirehtet.zip \
+          "https://github.com/Genymobile/gnirehtet/releases/download/$GNIREHTET_VERSION/gnirehtet-rust-linux64-$GNIREHTET_VERSION.zip"
+        unzip -o /tmp/gnirehtet.zip -d /tmp >/dev/null
+        chmod +x "$GNIREHTET_BIN"
+      fi
+      note "installing gnirehtet client APK on the phone"
+      adb install -r "$GNIREHTET_APK" >/dev/null
+
+      # kill any prior relay, then start a fresh one in the background
+      pkill -f 'gnirehtet run' 2>/dev/null || true
+      sleep 1
+      note "starting gnirehtet relay (port 31416) in background"
+      setsid nohup "$GNIREHTET_BIN" run "$DEVICE_SERIAL" \
+        < /dev/null > /tmp/gnirehtet.log 2>&1 &
+      disown
+      sleep 3
+
       if ! phone_has_internet; then
-        die "phone still offline after 60s. accept the gnirehtet VPN prompt and re-run."
+        echo
+        echo "  ┌──────────────────────────────────────────────────────────────────┐"
+        echo "  │  gnirehtet is running but the phone still has no tunnel.        │"
+        echo "  │  ACTION: on the phone, accept the 'Allow gnirehtet to set       │"
+        echo "  │  up a VPN connection?' prompt (check 'I trust this app' if      │"
+        echo "  │  shown, then tap OK). The script will continue automatically.  │"
+        echo "  └──────────────────────────────────────────────────────────────────┘"
+        echo
+        for i in $(seq 60 -5 5); do
+          if phone_has_internet; then
+            printf "\r  phone online via gnirehtet, continuing...      \n"
+            break
+          fi
+          printf "\r  waiting for VPN permission on the phone... %2ds " "$i"
+          sleep 5
+        done
+        if ! phone_has_internet; then
+          die "phone still offline after 60s. accept the gnirehtet VPN prompt and re-run."
+        fi
       fi
     fi
   fi
@@ -272,6 +278,14 @@ set -eu
 export DEBIAN_FRONTEND=noninteractive
 export APT_LISTCHANGES_FRONTEND=none
 
+# Write resolv.conf with a public DNS server. The phone's internet comes
+# through gnirehtet (reverse tunnel over ADB), so ALL traffic — including
+# DNS — goes through the laptop. 8.8.8.8 is resolved by the laptop's DNS.
+# This must happen BEFORE pkg update, which overwrites resolv.conf.
+echo "nameserver 8.8.8.8" > $PREFIX/etc/resolv.conf
+echo "=== DNS fix: wrote nameserver 8.8.8.8 to \$PREFIX/etc/resolv.conf ==="
+cat $PREFIX/etc/resolv.conf
+
 STAGE="__STAGE_DIR__"
 HOME="$HOME"
 LOG="$STAGE/install.log"
@@ -336,6 +350,70 @@ fi
 note "npm install"
 ( cd "$HOME/__PHONE_PROJECT_DIR__" && npm install --no-audit --no-fund )
 
+# Install grandma-kat tree-runtime library (from ../grandma-knits).
+# This is a local library, not published to npm, so we install from path.
+if [ -d "$HOME/__PHONE_PROJECT_DIR__/node_modules/grandma-kat" ]; then
+  note "grandma-kat already installed"
+else
+  note "installing grandma-kat tree-runtime library"
+  # Try local path first (if ../grandma-knits is staged), else git clone
+  if [ -d "$STAGE/grandma-knits" ]; then
+    cp -r "$STAGE/grandma-knits" "$HOME/__PHONE_PROJECT_DIR__/node_modules/grandma-kat"
+  else
+    git clone "__GRANDMA_KAT_URL__" "$HOME/__PHONE_PROJECT_DIR__/node_modules/grandma-kat" 2>/dev/null || true
+  fi
+fi
+
+# Set up pattern registry: JSON pattern files in workspace/patterns/
+# Contributors can write their own tree patterns in JSON and share them.
+WORKSPACE_DIR="$HOME/grandma-workspace"
+mkdir -p "$WORKSPACE_DIR/patterns"
+if [ ! -f "$WORKSPACE_DIR/patterns/agent.json" ]; then
+  note "creating default agent pattern"
+  cat > "$WORKSPACE_DIR/patterns/agent.json" <<'PATTERN_EOF'
+{
+  "name": "agent",
+  "description": "Standard agent loop: LLM → tools → LLM → answer",
+  "root": {
+    "type": "llm",
+    "model": "cheap",
+    "messages": "{{messages}}",
+    "onToolCall": {
+      "type": "toolCall",
+      "then": {
+        "type": "llm",
+        "model": "cheap",
+        "messages": "{{messages}} + {{toolResults}}"
+      }
+    }
+  }
+}
+PATTERN_EOF
+fi
+if [ ! -f "$WORKSPACE_DIR/patterns/research.json" ]; then
+  note "creating research pattern"
+  cat > "$WORKSPACE_DIR/patterns/research.json" <<'PATTERN_EOF'
+{
+  "name": "research",
+  "description": "Multi-step research: search → read → summarize → answer",
+  "root": {
+    "type": "llm",
+    "model": "cheap",
+    "messages": "{{messages}}",
+    "onToolCall": {
+      "type": "toolCall",
+      "then": {
+        "type": "llm",
+        "model": "strong",
+        "messages": "{{messages}} + {{toolResults}}"
+      }
+    }
+  }
+}
+PATTERN_EOF
+fi
+note "pattern registry set up at $WORKSPACE_DIR/patterns/"
+
 # Smoke-test the sherpa prebuilt. The binary's ELF interpreter is
 # /lib/ld-linux-aarch64.so.1; Termux ships the loader at
 # ~/usr/glibc/lib/. The loader doesn't process glibc's libc.so linker
@@ -384,7 +462,7 @@ tmux kill-session -t "$BOT_SESSION" 2>/dev/null || true
 tmux new-session -d -s "$BOT_SESSION" "sh -c 'cd \"$HOME/__PHONE_PROJECT_DIR__\" && exec npm run dev 2>&1 | tee \"$HOME/bot.log\"'"
 
 # Copy the admin server to $HOME and start it in tmux.
-# This is a small zero-dep web UI for credentials + status + logs.
+# This is a small zero-dep web UI for credentials + status + logs + patterns.
 ADMIN_SESSION="admin"
 ADMIN_PORT=__ADMIN_PORT__
 note "starting admin UI in tmux session '$ADMIN_SESSION' on port $ADMIN_PORT"
@@ -413,6 +491,7 @@ sed -i \
   -e "s|__REPO_URL__|$REPO_URL|g" \
   -e "s|__STT_PORT__|$STT_PORT|g" \
   -e "s|__ADMIN_PORT__|$ADMIN_PORT|g" \
+  -e "s|__GRANDMA_KAT_URL__|$GRANDMA_KAT_URL|g" \
   /tmp/grandma-bot-install.sh
 adb push /tmp/grandma-bot-install.sh "$STAGE_DIR/install.sh" >/dev/null
 rm /tmp/grandma-bot-install.sh
@@ -434,11 +513,12 @@ stage:  $STAGE_DIR
 stt:    sherpa-onnx  http://127.0.0.1:$STT_PORT
 llm:    remote (HF router)
 admin:  http://127.0.0.1:$ADMIN_PORT  (started after install)
+patterns: $HOME/grandma-workspace/patterns/  (JSON tree patterns)
 
 NEXT — run this ONE command in Termux on the phone (it does everything
 in one shot: grants /sdcard/ access, installs packages, clones the repo,
-extracts sherpa-onnx + model, runs npm install, starts tmux sessions
-for sherpa, bot, and the admin UI):
+extracts sherpa-onnx + model, installs grandma-kat tree-runtime, sets up
+the pattern registry, runs npm install, starts tmux sessions):
 
   sh $STAGE_DIR/install.sh
 
@@ -449,6 +529,11 @@ AFTER THE INSTALL — open the admin UI on the phone's browser:
 Fill in the Telegram bot token, your user ID, and the HF API key. Click
 "Save credentials" then "Restart bot". Send a voice note to your bot on
 Telegram to test.
+
+PATTERNS — the bot uses tree-runtime patterns for the agent loop.
+Contributors can write their own JSON patterns in
+  $HOME/grandma-workspace/patterns/
+and switch between them in the admin UI.
 
 WATCH LOGS (after the install finishes):
   adb shell tmux attach -t sherpa   # Ctrl-B then D to detach
