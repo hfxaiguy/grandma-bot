@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
+import path from "node:path";
 import { config } from "./config.js";
-import { ensureRepo } from "./tools/git.js";
+import { ensureRepo, ensureWorkspaceGitignore } from "./tools/git.js";
 import { ToolRegistry } from "./tools/index.js";
 import { Agent, checkLlmEntry } from "./agent.js";
 import { HistoryStore } from "./history.js";
@@ -12,6 +13,11 @@ async function main(): Promise<void> {
   await fs.mkdir(config.workspaceDir, { recursive: true });
   await fs.mkdir(config.tmpDir, { recursive: true });
   await ensureRepo(config.workspaceDir);
+  // The grandma-kat SQLite log lives under the workspace, not the project
+  // root — it contains user prompts/responses. Create the dir up front and
+  // exclude it from the workspace's git history.
+  await fs.mkdir(path.join(config.workspaceDir, "logs"), { recursive: true });
+  await ensureWorkspaceGitignore(config.workspaceDir, ["logs/grandma-kat.db*"]);
 
   const tools = new ToolRegistry(config.workspaceDir, config.allowedCommands);
   const models = await loadModels();

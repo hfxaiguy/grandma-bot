@@ -222,7 +222,21 @@ git -C ~/grandma-workspace config user.email grandma-bot@localhost
 **What happens if I delete the workspace directory?**
 On the next boot, `index.ts` recreates it (`mkdir -p`) and `ensureRepo` runs
 `git init`. You lose the git history, nothing else. The bot never stores state
-anywhere else except in-memory conversation history.
+anywhere else except in-memory conversation history and
+`<workspace>/logs/grandma-kat.db` (the grandma-kat SQLite audit log, see below).
+
+**Where does the run log live?**
+The grandma-kat runner writes every LLM call, tool call, check, goback, and
+gate to a SQLite database at `<workspace>/logs/grandma-kat.db` (plus its
+`-wal` and `-shm` siblings). It contains your prompts and the model's
+responses, so it stays with the workspace — back up the workspace, back up
+the log. On first boot `index.ts` appends `logs/grandma-kat.db*` to the
+workspace's `.gitignore` so the log doesn't pollute `git status`. To inspect
+manually:
+```sh
+sqlite3 ~/grandma-workspace/logs/grandma-kat.db \
+  "SELECT seq, branch_path, kind, substr(content, 1, 120) FROM calls ORDER BY seq DESC LIMIT 20;"
+```
 
 **Can I use the workspace repo myself — branches, remotes, my own commits?**
 Yes. It's a plain git repo. Add a remote and push for backup, commit your own

@@ -9,6 +9,13 @@ import { agentPattern, extractFinalText } from "./patterns/agent.js";
 export interface AgentDeps {
   /** Named LLM registry (e.g. { cheap, strong }) from models.json or env. */
   models: ModelRegistry;
+  /**
+   * Workspace directory. The grandma-kat SQLite log lives at
+   * `<workspace>/logs/grandma-kat.db` (with WAL/SHM siblings) — it
+   * contains user data (prompts, responses, tool calls) so it stays
+   * next to the user's files. The directory is created and added to
+   * the workspace's `.gitignore` at startup by `index.ts`.
+   */
   workspace: string;
   tools: ToolRegistry;
 }
@@ -20,8 +27,6 @@ export interface AgentDeps {
 function stripThought(text: string): string {
   return text.replace(/<\|channel\|>thought\n[\s\S]*?<channel\|>/g, "").trim();
 }
-
-const LOG_DB = path.resolve(process.cwd(), "logs/grandma-kat.db");
 
 /**
  * Ping the LLM endpoint's OpenAI-compatible /models route. Returns true on
@@ -52,8 +57,14 @@ export async function checkLlmEntry(
 
 export class Agent {
   private systemPrompt: string;
+  private logDb: string;
 
   constructor(private deps: AgentDeps) {
+    // SQLite log lives inside the workspace, not the project root — it
+    // contains user prompts/responses and should travel with the user's
+    // data when they back up the workspace. Caller (index.ts) is
+    // responsible for creating the directory and updating .gitignore.
+    this.logDb = path.resolve(deps.workspace, "logs/grandma-kat.db");
     this.systemPrompt = [
       "You are grandma-bot, a personal coding/assistant agent running locally on the user's machine, chatting via Telegram.",
       `You operate inside the workspace directory: ${deps.workspace}. All file tools are sandboxed to it.`,
@@ -84,7 +95,7 @@ export class Agent {
       models: this.deps.models,
       tools: this.deps.tools.toKatTools(),
       memory: { messages, system: this.systemPrompt },
-      logger: LOG_DB,
+      logger: this.logDb,
       logLevel: "info",
     });
 

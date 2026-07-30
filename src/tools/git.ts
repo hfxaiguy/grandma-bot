@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import fs from "node:fs/promises";
+import path from "node:path";
 
 const run = promisify(execFile);
 
@@ -23,6 +25,28 @@ export async function ensureRepo(dir: string): Promise<void> {
     await git(dir, ["config", "user.name", "grandma-bot"]);
     await git(dir, ["config", "user.email", "grandma-bot@localhost"]);
   }
+}
+
+/**
+ * Append entries to `<dir>/.gitignore`, creating the file if absent.
+ * Preserves any existing content. Idempotent: a line that's already there
+ * is not duplicated. Used so the bot's own runtime artifacts (e.g. the
+ * grandma-kat SQLite log under `logs/`) don't pollute the workspace's
+ * `git status`.
+ */
+export async function ensureWorkspaceGitignore(dir: string, entries: string[]): Promise<void> {
+  const gitignorePath = path.join(dir, ".gitignore");
+  let existing = "";
+  try {
+    existing = await fs.readFile(gitignorePath, "utf8");
+  } catch {
+    // file doesn't exist yet
+  }
+  const have = new Set(existing.split("\n").map((l) => l.trim()).filter(Boolean));
+  const toAdd = entries.filter((e) => !have.has(e));
+  if (toAdd.length === 0) return;
+  const next = existing.endsWith("\n") || existing === "" ? existing : existing + "\n";
+  await fs.writeFile(gitignorePath, next + toAdd.join("\n") + "\n", "utf8");
 }
 
 /**
