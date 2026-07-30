@@ -364,51 +364,58 @@ else
   fi
 fi
 
-# Set up pattern registry: JSON pattern files in workspace/patterns/
-# Contributors can write their own tree patterns in JSON and share them.
+# Set up pattern registry: JavaScript pattern files in workspace/patterns/
+# Contributors write their own tree patterns in .mjs and share them.
 WORKSPACE_DIR="$HOME/grandma-workspace"
 mkdir -p "$WORKSPACE_DIR/patterns"
-if [ ! -f "$WORKSPACE_DIR/patterns/agent.json" ]; then
+if [ ! -f "$WORKSPACE_DIR/patterns/agent.mjs" ]; then
   note "creating default agent pattern"
-  cat > "$WORKSPACE_DIR/patterns/agent.json" <<'PATTERN_EOF'
-{
-  "name": "agent",
-  "description": "Standard agent loop: LLM → tools → LLM → answer",
-  "root": {
-    "type": "llm",
-    "model": "cheap",
-    "messages": "{{messages}}",
-    "onToolCall": {
-      "type": "toolCall",
-      "then": {
-        "type": "llm",
-        "model": "cheap",
-        "messages": "{{messages}} + {{toolResults}}"
-      }
-    }
+  cat > "$WORKSPACE_DIR/patterns/agent.mjs" <<'PATTERN_EOF'
+// agent.mjs — Standard agent loop: LLM → tools → LLM → answer
+//
+// Contributors: write your own patterns as .mjs files in this directory.
+// Each file must export a default function that takes (state) and returns
+// the final answer string. Use state.llm, state.tools, state.messages.
+//
+// state.llm.chat(model, messages) — call the LLM
+// state.tools.execute(toolCalls) — execute tool calls
+// state.messages — the conversation history
+//
+// Example: a pattern that always uses the "strong" model:
+//   export default async (state) => {
+//     const r = await state.llm.chat("strong", state.messages);
+//     return r.content;
+//   }
+
+export default async function agent(state) {
+  const response = await state.llm.chat("cheap", state.messages);
+  if (response.toolCalls && response.toolCalls.length > 0) {
+    const results = await state.tools.execute(response.toolCalls);
+    const followup = await state.llm.chat("cheap", [...state.messages, ...results]);
+    return followup.content;
   }
+  return response.content;
 }
 PATTERN_EOF
 fi
-if [ ! -f "$WORKSPACE_DIR/patterns/research.json" ]; then
+if [ ! -f "$WORKSPACE_DIR/patterns/research.mjs" ]; then
   note "creating research pattern"
-  cat > "$WORKSPACE_DIR/patterns/research.json" <<'PATTERN_EOF'
-{
-  "name": "research",
-  "description": "Multi-step research: search → read → summarize → answer",
-  "root": {
-    "type": "llm",
-    "model": "cheap",
-    "messages": "{{messages}}",
-    "onToolCall": {
-      "type": "toolCall",
-      "then": {
-        "type": "llm",
-        "model": "strong",
-        "messages": "{{messages}} + {{toolResults}}"
-      }
-    }
+  cat > "$WORKSPACE_DIR/patterns/research.mjs" <<'PATTERN_EOF'
+// research.mjs — Multi-step research: cheap model for routing, strong for answer
+//
+// Uses the "cheap" model to decide what to search for, then the "strong"
+// model to synthesize the results into a final answer.
+
+export default async function research(state) {
+  // Step 1: cheap model decides what to search for
+  const routing = await state.llm.chat("cheap", state.messages);
+  if (routing.toolCalls && routing.toolCalls.length > 0) {
+    const results = await state.tools.execute(routing.toolCalls);
+    // Step 2: strong model synthesizes the results
+    const synthesis = await state.llm.chat("strong", [...state.messages, ...results]);
+    return synthesis.content;
   }
+  return routing.content;
 }
 PATTERN_EOF
 fi

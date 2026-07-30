@@ -113,18 +113,16 @@ async function listPatterns() {
     const files = await readdir(PATTERNS_DIR);
     const patterns = [];
     for (const f of files) {
-      if (!f.endsWith(".json")) continue;
+      if (!f.endsWith(".mjs")) continue;
       try {
-        const raw = await readFile(path.join(PATTERNS_DIR, f), "utf8");
-        const p = JSON.parse(raw);
-        patterns.push({
-          file: f,
-          name: p.name || f.replace(/\.json$/, ""),
-          description: p.description || "",
-          root: p.root ? p.root.type : "(unknown)",
-        });
+        const content = await readFile(path.join(PATTERNS_DIR, f), "utf8");
+        // Extract name and description from JSDoc comments
+        const nameMatch = content.match(/^\/\/\s*(\S+\.mjs)\s*[—–-]\s*(.+)/m);
+        const name = nameMatch ? nameMatch[1].replace(/\.mjs$/, "") : f.replace(/\.mjs$/, "");
+        const desc = nameMatch ? nameMatch[2] : "(no description)";
+        patterns.push({ file: f, name, description: desc });
       } catch (e) {
-        patterns.push({ file: f, name: f, description: `parse error: ${e.message}`, root: "(error)" });
+        patterns.push({ file: f, name: f, description: `read error: ${e.message}` });
       }
     }
     return patterns;
@@ -135,21 +133,19 @@ async function listPatterns() {
 
 async function readPattern(name) {
   try {
-    const raw = await readFile(path.join(PATTERNS_DIR, `${name}.json`), "utf8");
-    return JSON.parse(raw);
-  } catch (e) {
+    return await readFile(path.join(PATTERNS_DIR, `${name}.mjs`), "utf8");
+  } catch {
     return null;
   }
 }
 
-async function writePattern(name, body) {
+async function writePattern(name, content) {
   await mkdir(PATTERNS_DIR, { recursive: true });
-  await writeFile(path.join(PATTERNS_DIR, `${name}.json`), JSON.stringify(body, null, 2) + "\n", { mode: 0o644 });
+  await writeFile(path.join(PATTERNS_DIR, `${name}.mjs`), content, { mode: 0o644 });
 }
 
 async function deletePattern(name) {
-  const p = path.join(PATTERNS_DIR, `${name}.json`);
-  try { await (await import("node:fs/promises")).unlink(p); } catch {}
+  try { await (await import("node:fs/promises")).unlink(path.join(PATTERNS_DIR, `${name}.mjs`)); } catch {}
 }
 
 // ----- HTML -----
@@ -251,10 +247,12 @@ const HTML = `<!DOCTYPE html>
     <button onclick="showNewPattern()">New pattern</button>
   </div>
   <div id="pattern-editor" style="display:none; margin-top:12px">
-    <label>Pattern name (no spaces)</label>
+    <label>Pattern name (no spaces, e.g. "my-pattern")</label>
     <input id="p-name" type="text" placeholder="my-pattern">
-    <label>Pattern JSON</label>
-    <pre id="p-json" contenteditable="true" style="min-height:120px; cursor:text"></pre>
+    <label>Pattern code (.mjs — export default async function)</label>
+    <textarea id="p-code" style="width:100%; min-height:200px; background:#0b1224; color:#cbd5e1;
+      border:1px solid #334155; border-radius:6px; padding:12px;
+      font:12px ui-monospace,monospace; resize:vertical"></textarea>
     <div class="actions">
       <button onclick="savePattern()">Save pattern</button>
       <button class="secondary" onclick="hideNewPattern()">Cancel</button>
@@ -356,18 +354,32 @@ async function viewPattern(name) {
   try {
     const r = await api("/api/patterns/" + name);
     $("p-name").value = r.name || name;
-    $("p-json").textContent = JSON.stringify(r, null, 2);
+    $("p-code").value = r.content || "";
     $("pattern-editor").style.display = "block";
   } catch {}
 }
 
 function showNewPattern() {
   $("p-name").value = "";
-  $("p-json").textContent = JSON.stringify({
-    name: "my-pattern",
-    description: "A custom tree pattern",
-    root: { type: "llm", model: "cheap", messages: "{{messages}}" }
-  }, null, 2);
+  $("p-code").value = `// my-pattern.mjs — description of what this pattern does
+//
+// Available in state:
+//   state.llm.chat(model, messages) — call the LLM
+//   state.tools.execute(toolCalls) — execute tool calls
+//   state.messages — the conversation history
+//
+// model names: "cheap" (fast, routing) or "strong" (slow, tool-heavy)
+
+export default async function myPattern(state) {
+  const response = await state.llm.chat("cheap", state.messages);
+  if (response.toolCalls && response.toolCalls.length > 0) {
+    const results = await state.tools.execute(response.toolCalls);
+    const followup = await state.llm.chat("cheap", [...state.messages, ...results]);
+    return followup.content;
+  }
+  return response.content;
+}
+`;
   $("pattern-editor").style.display = "block";
 }
 
@@ -378,11 +390,10 @@ function hideNewPattern() {
 async function savePattern() {
   const name = $("p-name").value.trim();
   if (!name) { toast("pattern name required", true); return; }
-  let body;
-  try { body = JSON.parse($("p-json").textContent); } catch (e) { toast("invalid JSON: " + e.message, true); return; }
-  body.name = name;
+  const content = $("p-code").value;
+  if (!content.trim()) { toast("pattern code required", true); return; }
   try {
-    await api("/api/patterns", { method: "POST", body: JSON.stringify(body) });
+    await api("/api/patterns", { method: "POST", body: JSON.stringify({ name, content }) });
     toast("pattern saved");
     hideNewPattern();
     refreshPatterns();
@@ -477,18 +488,18 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && url.pathname.startsWith("/api/patterns/")) {
       const name = url.pathname.split("/").pop();
-      const p = await readPattern(name);
-      if (!p) { res.writeHead(404); res.end('{"error":"pattern not found"}'); return; }
+      const content = await readPattern(name);
+      if (content === null) { res.writeHead(404); res.end('{"error":"pattern not found"}'); return; }
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify(p));
+      res.end(JSON.stringify({ name, content }));
       return;
     }
 
     if (req.method === "POST" && url.pathname === "/api/patterns") {
       const body = await readBody(req);
       const p = JSON.parse(body);
-      if (!p.name) { res.writeHead(400); res.end('{"error":"pattern must have a name"}'); return; }
-      await writePattern(p.name, p);
+      if (!p.name || !p.content) { res.writeHead(400); res.end('{"error":"pattern must have name and content"}'); return; }
+      await writePattern(p.name, p.content);
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: true }));
       return;
