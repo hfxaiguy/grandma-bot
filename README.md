@@ -128,11 +128,22 @@ independent of the harness.
    DeepInfra has it disabled. Check `supports_tools` at
    https://router.huggingface.co/v1/models before changing `LLM_MODEL`.
    `openai/gpt-oss-120b:deepinfra` is a cheap text-only alternative.
-   Alternatives (see commented blocks in `.env.example`):
-   - local: build [llama.cpp](https://github.com/ggml-org/llama.cpp) with
-     `-DGGML_VULKAN=ON` and run `llama-server -m model.gguf --jinja -c 8192`
-     (`--jinja` needed so the chat template renders tools), or
-   - any other OpenAI-compatible API via `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL`.
+    Alternatives (see commented blocks in `.env.example`):
+    - local: build [llama.cpp](https://github.com/ggml-org/llama.cpp) with
+      `-DGGML_VULKAN=ON` and run `llama-server -m model.gguf --jinja -c 8192`
+      (`--jinja` needed so the chat template renders tools), or
+    - [Ollama](https://ollama.com/download) — the local server exposes an
+      OpenAI-compatible API at `http://127.0.0.1:11434/v1`. After installing
+      Ollama and pulling a model, set in `.env`:
+      ```
+      LLM_BASE_URL=http://127.0.0.1:11434/v1
+      LLM_API_KEY=ollama
+      LLM_MODEL=gemma4:31b-cloud
+      ```
+      Run `npm run ollama:up` in another terminal to start the server (it
+      no-ops if Ollama is already running as a service). Tested with
+      `gemma4:31b-cloud` (multimodal, 256K context, tool calling supported).
+    - any other OpenAI-compatible API via `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL`.
 
    Note: small local models vary a lot in tool-calling quality — if the agent
    misuses tools, switch models before debugging anything else.
@@ -142,6 +153,20 @@ independent of the harness.
 ```sh
 npm run whisper:up   # terminal 1: whisper-server on 127.0.0.1:8178
 npm run dev          # terminal 2: the bot
+```
+
+If you're using **Ollama** for the LLM instead of the HF router:
+
+```sh
+ollama pull gemma4:31b-cloud   # one-time, ~20 GB
+npm run ollama:up              # terminal 1: ollama serve (or skip if systemd-managed)
+npm run dev                    # terminal 2: the bot
+```
+
+The bot's startup log prints whether the LLM endpoint is reachable, e.g.:
+
+```
+llm       : gemma4:31b-cloud @ http://127.0.0.1:11434/v1 (reachable)
 ```
 
 Useful checks: `npm run typecheck`, `npm run smoke` (offline tool/git tests),

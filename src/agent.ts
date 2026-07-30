@@ -24,6 +24,27 @@ function stripThought(text: string): string {
 
 const LOG_DB = path.resolve(process.cwd(), "logs/grandma-kat.db");
 
+/**
+ * Ping the LLM endpoint's OpenAI-compatible /models route. Returns true on
+ * any 2xx, false on transport error or non-2xx. Used at startup so a missing
+ * Ollama/llama-server is surfaced as a warning instead of a cryptic first-
+ * message failure.
+ */
+export async function checkLlm(baseURL: string, apiKey: string): Promise<boolean> {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 3000);
+    const res = await fetch(`${baseURL.replace(/\/$/, "")}/models`, {
+      signal: ctrl.signal,
+      headers: apiKey && apiKey !== "no-key" ? { Authorization: `Bearer ${apiKey}` } : {},
+    });
+    clearTimeout(t);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export class Agent {
   private systemPrompt: string;
 

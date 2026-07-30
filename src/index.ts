@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import { config } from "./config.js";
 import { ensureRepo } from "./tools/git.js";
 import { ToolRegistry } from "./tools/index.js";
-import { Agent } from "./agent.js";
+import { Agent, checkLlm } from "./agent.js";
 import { HistoryStore } from "./history.js";
 import { createBot } from "./bot.js";
 import { checkStt } from "./stt.js";
@@ -22,6 +22,13 @@ async function main(): Promise<void> {
     maxToolIterations: config.maxToolIterations,
   });
   const history = new HistoryStore(config.historyLimit);
+
+  const llmOk = await checkLlm(config.llmBaseUrl, config.llmApiKey);
+  if (!llmOk) {
+    console.warn(
+      `[warn] LLM endpoint not reachable at ${config.llmBaseUrl} — first message will fail until it's up.`,
+    );
+  }
 
   const sttUrl = config.sttBackend === "sherpa" ? config.sherpaUrl : config.whisperUrl;
   const sttOk = await checkStt(config.sttBackend, config.whisperUrl, config.sherpaUrl);
@@ -53,7 +60,7 @@ async function main(): Promise<void> {
     onStart: (me) => {
       console.log(`grandma-bot up as @${me.username}`);
       console.log(`workspace : ${config.workspaceDir} (git auto-commit on)`);
-      console.log(`llm       : ${config.llmModel} @ ${config.llmBaseUrl}`);
+      console.log(`llm       : ${config.llmModel} @ ${config.llmBaseUrl} ${llmOk ? "(reachable)" : "(NOT reachable)"}`);
       console.log(`stt       : ${config.sttBackend} @ ${sttUrl} ${sttOk ? "(reachable)" : "(NOT reachable)"}`);
       console.log(`users     : ${[...config.allowedUserIds].join(", ")}`);
     },
