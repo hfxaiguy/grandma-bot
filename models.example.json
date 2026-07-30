@@ -2,11 +2,13 @@
   "cheap": {
     "baseURL": "http://127.0.0.1:11434/v1",
     "apiKey": "ollama",
-    "model": "gemma4:e2b"
+    "model": "gemma4:e2b",
+    "transform": "gemma4Thinking"
   },
   "strong": {
     "baseURL": "http://127.0.0.1:11434/v1",
     "apiKey": "ollama",
-    "model": "gemma4:31b-cloud"
+    "model": "gemma4:31b-cloud",
+    "transform": "gemma4Thinking"
   }
 }

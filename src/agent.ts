@@ -20,13 +20,10 @@ export interface AgentDeps {
   tools: ToolRegistry;
 }
 
-/**
- * Gemma 4 emits its reasoning as "<|channel>thought\n…<channel|>" before the final
- * answer (even with thinking disabled, as an empty block). Strip it from user-facing text.
- */
-function stripThought(text: string): string {
-  return text.replace(/<\|channel\|>thought\n[\s\S]*?<channel\|>/g, "").trim();
-}
+// stripThought is no longer needed here — the per-model `transform`
+// hook in grandma-kat's llm.mjs strips Gemma 4's <|channel> tags and
+// populates the reasoning field before the response reaches the pattern.
+// The content arriving at runTurn is already clean.
 
 /**
  * Ping the LLM endpoint's OpenAI-compatible /models route. Returns true on
@@ -107,6 +104,8 @@ export class Agent {
     messages.length = 0;
     messages.push(...updated);
 
-    return stripThought(String(result ?? "")) || "(empty response)";
+    // The transform hook already stripped thinking tags and populated
+    // reasoning — result is clean content.
+    return String(result ?? "") || "(empty response)";
   }
 }

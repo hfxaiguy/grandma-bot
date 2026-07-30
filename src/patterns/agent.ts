@@ -144,11 +144,20 @@ interface KatToolResult {
   isError?: boolean;
 }
 
-/** The full record for a prompt leaf. We read `.content`, `.toolCalls`,
- *  and `.toolResults` from it; `calls` and `reasoning` exist too but
- *  we don't use them in this pattern. */
+/** The full record for a prompt leaf. We read `.content`, `.reasoning`,
+ *  `.toolCalls`, and `.toolResults` from it. `calls` (the per-round
+ *  transcript) exists too but we don't use it in this pattern.
+ *
+ *  `reasoning` is the model's thinking output. For models that return a
+ *  separate reasoning field (DeepSeek, Qwen), it's populated by
+ *  grandma-kat's built-in extraction. For models that embed thinking
+ *  in the content (Gemma 4's `<|channel>thought…<channel|>`), it's
+ *  populated by the per-model `transform` hook in `llm.mjs`. After
+ *  the transform runs, the content is clean (no thinking tags) and
+ *  the reasoning field has the extracted thinking text. */
 interface KatPromptRecord {
   content: string;
+  reasoning?: string | null;
   toolCalls?: KatToolCall[];
   toolResults?: KatToolResult[];
 }
