@@ -8,6 +8,7 @@ import { HistoryStore } from "./history.js";
 import { loadModels } from "./models.js";
 import { createBot } from "./bot.js";
 import { checkStt } from "./stt.js";
+import { startAdmin } from "./admin.js";
 
 async function main(): Promise<void> {
   await fs.mkdir(config.workspaceDir, { recursive: true });
@@ -42,6 +43,10 @@ async function main(): Promise<void> {
       `[warn] ${config.sttBackend}-server not reachable at ${sttUrl} — voice messages will fail.`,
     );
   }
+
+  // Start admin UI (web interface for credentials, status, logs, patterns, files).
+  const adminPort = parseInt(process.env.ADMIN_PORT || "8080", 10);
+  startAdmin({ port: adminPort });
 
   const bot = createBot({
     token: config.telegramToken,

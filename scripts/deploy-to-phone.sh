@@ -473,16 +473,7 @@ tmux new-session -d -s "$BOT_SESSION" "sh -c 'cd \"$HOME/__PHONE_PROJECT_DIR__\"
 # This is a small zero-dep web UI for credentials + status + logs + patterns.
 ADMIN_SESSION="admin"
 ADMIN_PORT=__ADMIN_PORT__
-note "starting admin UI in tmux session '$ADMIN_SESSION' on port $ADMIN_PORT"
-cp "$STAGE/admin-server.mjs" "$HOME/admin-server.mjs" 2>/dev/null || true
-tmux kill-session -t "$ADMIN_SESSION" 2>/dev/null || true
-tmux new-session -d -s "$ADMIN_SESSION" "sh -c 'exec node \"$HOME/admin-server.mjs\" 2>&1 | tee \"$HOME/admin.log\"'"
-sleep 1
-if curl -sSf -m 3 "http://127.0.0.1:$ADMIN_PORT/" >/dev/null 2>&1; then
-  note "admin UI is reachable on http://127.0.0.1:$ADMIN_PORT"
-else
-  warn "admin UI not responding yet — check: tmux attach -t $ADMIN_SESSION"
-fi
+note "admin UI on port $ADMIN_PORT (started with the bot, not as a separate tmux session)"
 
 # Signal completion to the laptop
 note "all done"
@@ -546,7 +537,6 @@ and switch between them in the admin UI.
 WATCH LOGS (after the install finishes):
   adb shell tmux attach -t sherpa   # Ctrl-B then D to detach
   adb shell tmux attach -t bot
-  adb shell tmux attach -t admin
 
 If sherpa-onnx fails to start (glibc vs Bionic), in Termux run:
   pkg install glibc
