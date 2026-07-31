@@ -2,7 +2,10 @@
 # scripts/sync-workspace.sh
 #
 # Start sshd on the phone and print the rsync command for the laptop
-# to pull the workspace (including SQLite databases + WAL files).
+# to pull the workspace (including SQLite databases).
+#
+# The SQLite database is backed up with .backup first (consistent
+# snapshot, safe to run while the bot is writing).
 #
 # Run on the phone once (after each reboot or reboot of sshd):
 #   sh /sdcard/Download/grandpa-bob-deploy/sync-workspace.sh
@@ -10,11 +13,11 @@
 # Then on the laptop, run the printed rsync command.
 set -eu
 
-STAGE="/sdcard/Download/grandpa-bob-deploy"
+STAGE="/sdcard/Download/grandma-bob-deploy"
 PORT=8022
 
-echo "=== installing rsync and openssh ==="
-pkg install -y rsync openssh 2>&1 | tail -5
+echo "=== installing rsync, openssh, sqlite ==="
+pkg install -y rsync openssh sqlite 2>&1 | tail -5
 
 echo "=== starting sshd ==="
 pkill sshd 2>/dev/null || true
@@ -31,12 +34,7 @@ echo "=== sshd is listening on port $PORT ==="
 echo
 echo "On your laptop, run:"
 echo
-echo "  # stop the bot (so SQLite is consistent)"
-echo "  adb shell tmux kill-session -t bot"
-echo "  # pull workspace (rsync over SSH)"
 echo "  rsync -avz --progress -e \"ssh -p $PORT\" u0_a209@${MYIP}:~/grandma-workspace/ \\"
 echo "    /home/love/Documents/Code/grandma-workspace/"
-echo "  # restart the bot on the phone"
-echo "  adb shell tmux new-session -d -s bot \"sh -c 'cd ~/grandma-bob && npm run dev 2>&1 | tee ~/bot.log'\""
 echo
 echo "=== first time only — accept the host key when prompted ==="
