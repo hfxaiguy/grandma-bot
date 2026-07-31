@@ -6,5 +6,6 @@ workspace/
 *.log
 nohup.out
 tmp/
+workspace.tar.gz
 logs/
 models.json
