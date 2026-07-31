@@ -353,8 +353,8 @@ if [ ! -d "$HOME/__PHONE_PROJECT_DIR__/.git" ]; then
   note "cloning repo"
   git clone "__REPO_URL__" "$HOME/__PHONE_PROJECT_DIR__"
 else
-  note "repo already cloned — pulling latest"
-  git -C "$HOME/__PHONE_PROJECT_DIR__" pull --ff-only
+  note "repo already cloned — pulling latest (ok if DNS fails)"
+  git -C "$HOME/__PHONE_PROJECT_DIR__" pull --ff-only || warn "git pull failed (DNS?), using existing code"
 fi
 
 # Write .env if missing
@@ -366,9 +366,13 @@ else
   note ".env already exists — leaving it alone"
 fi
 
-# npm install
+# npm install (skip if node_modules already has packages)
 note "npm install"
-( cd "$HOME/__PHONE_PROJECT_DIR__" && npm install --no-audit --no-fund )
+if [ -d "$HOME/__PHONE_PROJECT_DIR__/node_modules/.package-lock.json" ]; then
+  note "node_modules already populated, skipping npm install"
+else
+  ( cd "$HOME/__PHONE_PROJECT_DIR__" && npm install --no-audit --no-fund ) || warn "npm install failed (DNS?), existing node_modules may be stale"
+fi
 
 # Install grandma-kat tree-runtime library (from ../grandma-knits).
 # This is a local library, not published to npm, so we install from path.
@@ -380,7 +384,7 @@ else
   if [ -d "$STAGE/grandma-knits" ]; then
     cp -r "$STAGE/grandma-knits" "$HOME/__PHONE_PROJECT_DIR__/node_modules/grandma-kat"
   else
-    git clone "__GRANDMA_KAT_URL__" "$HOME/__PHONE_PROJECT_DIR__/node_modules/grandma-kat" 2>/dev/null || true
+    git clone "__GRANDMA_KAT_URL__" "$HOME/__PHONE_PROJECT_DIR__/node_modules/grandma-kat" 2>/dev/null || warn "grandma-kat clone failed (DNS?), using existing if present"
   fi
 fi
 
