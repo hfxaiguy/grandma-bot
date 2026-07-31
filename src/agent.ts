@@ -49,7 +49,9 @@ export async function checkLlmEntry(
       headers: apiKey && apiKey !== "no-key" ? { Authorization: `Bearer ${apiKey}` } : {},
     });
     clearTimeout(t);
-    return res.ok;
+    // A non-5xx response means the server is alive and reachable.
+    // 4xx errors (auth, not found) are still "reachable" — just misconfigured.
+    return res.status < 500;
   } catch {
     return false;
   }

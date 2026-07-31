@@ -89,7 +89,10 @@ export async function checkStt(backend: SttBackend, whisperUrl: string, sherpaUr
     const t = setTimeout(() => ctrl.abort(), 3000);
     const res = await fetch(url + "/", { signal: ctrl.signal });
     clearTimeout(t);
-    return res.ok;
+    // sherpa-onnx is a WebSocket server — plain HTTP GET returns 426
+    // (Upgrade Required). That's not an error, the server is alive.
+    // Accept any non-5xx response as "reachable".
+    return res.status < 500;
   } catch {
     return false;
   }
