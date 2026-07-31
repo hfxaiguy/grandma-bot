@@ -282,9 +282,10 @@ export APT_LISTCHANGES_FRONTEND=none
 # through gnirehtet (reverse tunnel over ADB), so ALL traffic — including
 # DNS — goes through the laptop. 8.8.8.8 is resolved by the laptop's DNS.
 # This must happen BEFORE pkg update, which overwrites resolv.conf.
-echo "nameserver 8.8.8.8" > $PREFIX/etc/resolv.conf
+# Use || true because set -eu would kill the script if $PREFIX isn't set.
+echo "nameserver 8.8.8.8" > $PREFIX/etc/resolv.conf 2>/dev/null || true
 echo "=== DNS fix: wrote nameserver 8.8.8.8 to \$PREFIX/etc/resolv.conf ==="
-cat $PREFIX/etc/resolv.conf
+cat $PREFIX/etc/resolv.conf 2>/dev/null || echo "(no resolv.conf)"
 
 STAGE="__STAGE_DIR__"
 HOME="$HOME"
@@ -305,29 +306,36 @@ if [ ! -d "$HOME/storage" ]; then
   termux-setup-storage
 fi
 
-# Bootstrap packages
-note "pkg update"
-pkg update -y
-note "pkg upgrade (may be skipped if up to date)"
-pkg upgrade -y || true
-note "installing runtime packages"
-pkg install -y git nodejs-lts ffmpeg tmux openssl-tool
-
-# Install glibc dynamic linker for glibc-linked binaries (sherpa-onnx).
-# OpenClaw approach: use glibc-runner from pacman (simpler than
-# glibc-repo + glibc via pkg). Falls back to pkg if pacman fails.
-# WHY: glibc binaries read /etc/resolv.conf for DNS, but Android
-# doesn't have one. Bionic-linked binaries (like Termux's nodejs-lts)
-# use Android's resolver directly, but glibc binaries don't.
-# We fix DNS separately by writing $PREFIX/etc/resolv.conf (see above).
-note "installing glibc dynamic linker"
-if pacman -S --noconfirm glibc-runner 2>/dev/null; then
-  note "glibc-runner installed via pacman"
+# Bootstrap packages (skip if already installed from a previous run).
+# On some networks (e.g. BELL001), external DNS is blocked and pkg update
+# fails. If the core packages are already present, skip the bootstrap
+# entirely — the rest of the script only needs git, node, ffmpeg, tmux.
+if command -v git >/dev/null && command -v node >/dev/null && command -v ffmpeg >/dev/null && command -v tmux >/dev/null; then
+  note "core packages already installed, skipping pkg update/install"
 else
-  note "pacman failed, falling back to glibc-repo + glibc via pkg"
-  pkg install -y glibc-repo
-  pkg update -y
-  pkg install -y glibc
+  note "pkg update"
+  pkg update -y || warn "pkg update failed (DNS?), continuing anyway"
+  note "pkg upgrade (may be skipped if up to date)"
+  pkg upgrade -y || true
+  note "installing runtime packages"
+  pkg install -y git nodejs-lts ffmpeg tmux openssl-tool
+
+  # Install glibc dynamic linker for glibc-linked binaries (sherpa-onnx).
+  # OpenClaw approach: use glibc-runner from pacman (simpler than
+  # glibc-repo + glibc via pkg). Falls back to pkg if pacman fails.
+  # WHY: glibc binaries read /etc/resolv.conf for DNS, but Android
+  # doesn't have one. Bionic-linked binaries (like Termux's nodejs-lts)
+  # use Android's resolver directly, but glibc binaries don't.
+  # We fix DNS separately by writing $PREFIX/etc/resolv.conf (see above).
+  note "installing glibc dynamic linker"
+  if pacman -S --noconfirm glibc-runner 2>/dev/null; then
+    note "glibc-runner installed via pacman"
+  else
+    note "pacman failed, falling back to glibc-repo + glibc via pkg"
+    pkg install -y glibc-repo || warn "glibc-repo failed"
+    pkg update -y || true
+    pkg install -y glibc || warn "glibc install failed"
+  fi
 fi
 
 # Move staged files into HOME
