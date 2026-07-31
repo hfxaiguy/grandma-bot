@@ -257,10 +257,10 @@ export APT_LISTCHANGES_FRONTEND=none
 # Termux's apt/pkg can't resolve hostnames because Android's DNS
 # resolver doesn't propagate to Termux's standalone binaries.
 # This must happen BEFORE pkg update, which overwrites resolv.conf.
-# Use || true because set -eu would kill the script if $PREFIX isn't set.
-echo "nameserver 8.8.8.8" > $PREFIX/etc/resolv.conf 2>/dev/null || true
-echo "=== DNS fix: wrote nameserver 8.8.8.8 to \$PREFIX/etc/resolv.conf ==="
-cat $PREFIX/etc/resolv.conf 2>/dev/null || echo "(no resolv.conf)"
+# Use the full path (not $PREFIX which may be unset via adb).
+echo "nameserver 8.8.8.8" > /data/data/com.termux/files/usr/etc/resolv.conf 2>/dev/null || true
+echo "=== DNS fix: wrote nameserver 8.8.8.8 ==="
+cat /data/data/com.termux/files/usr/etc/resolv.conf 2>/dev/null || echo "(no resolv.conf)"
 
 STAGE="__STAGE_DIR__"
 HOME="$HOME"
