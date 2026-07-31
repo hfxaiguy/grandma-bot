@@ -17,11 +17,12 @@
 //   http://10.0.0.2:8181
 
 import http from "node:http";
-import { readFile, writeFile, readdir, stat, mkdir } from "node:fs/promises";
+import { readFile, writeFile, readdir, stat, mkdir, unlink, rename } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import fs from "node:fs";
 
 const execFileAsync = promisify(execFile);
 
@@ -148,6 +149,81 @@ async function deletePattern(name) {
   try { await (await import("node:fs/promises")).unlink(path.join(PATTERNS_DIR, `${name}.mjs`)); } catch {}
 }
 
+// ----- file browser -----
+// Path safety: all paths resolve inside WORKSPACE_DIR, no escapes.
+function safePath(p) {
+  const resolved = path.resolve(WORKSPACE_DIR, p || ".");
+  if (!resolved.startsWith(WORKSPACE_DIR)) throw new Error("path outside workspace");
+  return resolved;
+}
+
+async function listFiles(dir) {
+  const resolved = safePath(dir);
+  const entries = await readdir(resolved, { withFileTypes: true });
+  const out = [];
+  for (const e of entries) {
+    const full = path.join(resolved, e.name);
+    const s = await stat(full).catch(() => null);
+    out.push({
+      name: e.name,
+      isDir: e.isDirectory(),
+      size: s ? s.size : 0,
+      mtime: s ? s.mtime.toISOString() : null,
+    });
+  }
+  out.sort((a, b) => (b.isDir - a.isDir) || a.name.localeCompare(b.name));
+  return out;
+}
+
+async function readBinary(p) {
+  const resolved = safePath(p);
+  return await readFile(resolved);
+}
+
+async function saveFile(p, content) {
+  const resolved = safePath(p);
+  const dir = path.dirname(resolved);
+  await mkdir(dir, { recursive: true });
+  await writeFile(resolved, content, { mode: 0o644 });
+}
+
+async function deleteFile(p) {
+  const resolved = safePath(p);
+  await unlink(resolved);
+}
+
+// Read multipart form data (simple, no external deps)
+function readMultipart(req, boundary) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => {
+      const buf = Buffer.concat(chunks);
+      const str = buf.toString("latin1");
+      // find the part after boundary
+      const parts = str.split("--" + boundary).slice(1, -1);
+      const result = {};
+      for (const part of parts) {
+        const headerEnd = part.indexOf("\r\n\r\n");
+        if (headerEnd < 0) continue;
+        const header = part.slice(0, headerEnd);
+        const body = part.slice(headerEnd + 4, part.length - 2); // strip trailing \r\n
+        const nameMatch = header.match(/name="([^"]+)"/);
+        const filenameMatch = header.match(/filename="([^"]+)"/);
+        if (!nameMatch) continue;
+        const name = nameMatch[1];
+        if (filenameMatch) {
+          result[name] = { filename: filenameMatch[1], content: Buffer.from(body, "latin1") };
+        } else {
+          result[name] = body;
+        }
+      }
+      resolve(result);
+    });
+    req.on("error", reject);
+  });
+}
+
 // ----- HTML -----
 const HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -263,8 +339,22 @@ const HTML = `<!DOCTYPE html>
 <div class="card">
   <h2 style="margin-top:0">Access</h2>
   <p style="margin:4px 0"><small>This UI runs on the phone at <code>http://127.0.0.1:${PORT}</code>.</small></p>
-  <p style="margin:4px 0"><small>If you're tunneling via gnirehtet, the laptop can reach it at <code>http://10.0.0.2:${PORT}</code>.</small></p>
+  <p style="margin:4px 0"><small>If you're on the same Wi-Fi, open <code>http://<phone-ip>:${PORT}</code> from your laptop.</small></p>
   <p style="margin:4px 0"><small>To expose to the internet, run an SSH reverse tunnel or use Termux's <code>pkg install cloudflared</code>.</small></p>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">Files</h2>
+  <p style="margin:4px 0"><small>Browse, upload, and download files in the workspace.</small></p>
+  <div id="file-nav" class="row" style="margin-bottom:8px; flex-wrap:wrap">
+    <button class="secondary" onclick="filesBrowse()">↻ Refresh</button>
+    <span id="file-path" style="margin-left:auto; font-size:12px; color:var(--muted)">/</span>
+  </div>
+  <div id="file-list" style="max-height:300px; overflow:auto; border:1px solid #334155; border-radius:6px; padding:8px; background:#0b1224; font:12px ui-monospace,monospace">(loading...)</div>
+  <div class="actions" style="margin-top:8px">
+    <input id="file-upload-input" type="file" style="display:none" onchange="uploadFile(this)" multiple />
+    <button onclick="document.getElementById('file-upload-input').click()">Upload file</button>
+  </div>
 </div>
 
 <div id="toast" class="toast"></div>
@@ -415,8 +505,82 @@ setInterval(() => {
   $("uptime").textContent = \`uptime: \${m}m \${s}s\`;
 }, 1000);
 
+// ----- file browser -----
+let currentDir = "";
+
+async function filesBrowse(dir) {
+  if (dir !== undefined) currentDir = dir;
+  try {
+    const r = await api("/api/files?path=" + encodeURIComponent(currentDir));
+    $("file-path").textContent = "/" + (r.dir || "(root)");
+    const list = $("file-list");
+    if (r.files.length === 0) {
+      list.innerHTML = '<small style="color:var(--muted)">(empty directory)</small>';
+      return;
+    }
+    list.innerHTML = r.files.map(f => {
+      const size = f.isDir ? "dir" : formatSize(f.size);
+      const mtime = f.mtime ? new Date(f.mtime).toLocaleString() : "";
+      const click = f.isDir ? \`onclick="filesBrowse('\${escapePath(r.dir, f.name)}')"\` : "";
+      const dl = !f.isDir ? \`<a href="/api/files/download?path=\${escapePath(r.dir, f.name)}" style="color:var(--accent); text-decoration:none; font-size:11px">↓</a>\` : "";
+      const rm = !f.isDir ? \`<button class="danger" style="padding:2px 6px; font-size:11px" onclick="deleteFile('\${escapePath(r.dir, f.name)}', '\${f.name}')">×</button>\` : "";
+      return \`<div style="display:flex; align-items:center; padding:3px 0; border-bottom:1px solid #1e293b">
+        <span \${click} style="cursor:\${f.isDir ? 'pointer' : 'default'}; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">
+          \${f.isDir ? '📁 ' : '📄 '}\${f.name}
+        </span>
+        <span style="width:60px; text-align:right; color:var(--muted); font-size:11px">\${size}</span>
+        <span style="width:140px; text-align:right; color:var(--muted); font-size:11px">\${mtime}</span>
+        <span style="width:30px; text-align:center">\${dl}\${rm}</span>
+      </div>\`;
+    }).join("");
+  } catch (e) {
+    $("file-list").textContent = "error: " + e.message;
+  }
+}
+
+function escapePath(dir, name) {
+  const p = dir ? dir + "/" + name : name;
+  return p.replace(/'/g, "\\'");
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
+  return (bytes / 1048576).toFixed(1) + " MB";
+}
+
+async function deleteFile(p, name) {
+  if (!confirm('Delete "' + name + '"?')) return;
+  try {
+    await api("/api/files?path=" + encodeURIComponent(p), { method: "DELETE" });
+    toast("deleted " + name);
+    filesBrowse();
+  } catch {}
+}
+
+async function uploadFile(input) {
+  const files = input.files;
+  if (!files.length) return;
+  for (const file of files) {
+    const fd = new FormData();
+    fd.append("path", currentDir);
+    fd.append("file", file);
+    try {
+      const r = await fetch("/api/files/upload", { method: "POST", body: fd });
+      const d = await r.json();
+      if (!r.ok) { toast(d.error || "upload failed", true); continue; }
+      toast("uploaded " + file.name);
+    } catch (e) {
+      toast("upload failed: " + e.message, true);
+    }
+  }
+  input.value = "";
+  filesBrowse();
+}
+
 refreshStatus();
 refreshPatterns();
+filesBrowse();
 </script>
 </body>
 </html>
@@ -508,6 +672,50 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "DELETE" && url.pathname.startsWith("/api/patterns/")) {
       const name = url.pathname.split("/").pop();
       await deletePattern(name);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+
+    // --- file browser API ---
+    if (req.method === "GET" && url.pathname === "/api/files") {
+      const dir = url.searchParams.get("path") || "";
+      const files = await listFiles(dir);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ dir, files }));
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/files/download") {
+      const p = url.searchParams.get("path");
+      if (!p) { res.writeHead(400); res.end('{"error":"path required"}'); return; }
+      const content = await readBinary(p);
+      const filename = path.basename(p);
+      res.writeHead(200, { "content-type": "application/octet-stream", "content-disposition": `attachment; filename="${filename}"` });
+      res.end(content);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/files/upload") {
+      const contentType = req.headers["content-type"] || "";
+      if (!contentType.includes("multipart/form-data")) { res.writeHead(400); res.end('{"error":"multipart required"}'); return; }
+      const boundary = contentType.split("boundary=")[1];
+      if (!boundary) { res.writeHead(400); res.end('{"error":"no boundary"}'); return; }
+      const parts = await readMultipart(req, boundary);
+      const file = parts.file;
+      const destPath = parts.path || "";
+      if (!file || !file.filename) { res.writeHead(400); res.end('{"error":"no file"}'); return; }
+      const saveTo = path.join(destPath, file.filename);
+      await saveFile(saveTo, file.content);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, path: saveTo, size: file.content.length }));
+      return;
+    }
+
+    if (req.method === "DELETE" && url.pathname === "/api/files") {
+      const p = url.searchParams.get("path");
+      if (!p) { res.writeHead(400); res.end('{"error":"path required"}'); return; }
+      await deleteFile(p);
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: true }));
       return;
