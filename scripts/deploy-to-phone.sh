@@ -123,82 +123,57 @@ note "opening Termux"
 adb_s am start -n com.termux/.app.TermuxActivity >/dev/null 2>&1 || true
 
 # ---------- ensure the phone has internet ----------
-# Without internet, the in-Termux install.sh can't reach package mirrors,
-# git remotes, or the npm registry. Try to bring the phone online by:
-#   1) checking if gnirehtet is already running (tun0 with an IP)
-#   2) switching the USB function to rndis,adb (some Samsungs reject this)
-#   3) starting gnirehtet (a no-root ADB-based reverse-tether that
-#      forwards phone traffic through the laptop's internet)
+# IMPORTANT: gnirehtet (a VPN-based reverse-tether) interferes with
+# Termux's DNS resolution. Android's VPN API routes browser traffic
+# through the VPN, but Termux's standalone binaries (git, curl, Node.js)
+# use the kernel routing table, which doesn't have VPN routes. This causes
+# "Could not resolve host" errors in Termux even though the browser works.
+#
+# FIX: kill gnirehtet if it's running, then use the phone's own Wi-Fi.
+# BELL001's Wi-Fi works fine for Termux once the VPN is gone.
+
+# kill any lingering gnirehtet on the laptop
+pkill -f 'gnirehtet run' 2>/dev/null || true
+sleep 1
+
+# force-stop gnirehtet on the phone (cleans up the VPN)
+adb_s am force-stop com.genymobile.gnirehtet 2>/dev/null || true
+sleep 2
+
 phone_has_internet() {
-  # Consider the phone online if EITHER:
-  #   (a) there's a default route via a normal interface (Wi-Fi, cellular), OR
-  #   (b) there's an active tun* interface with an IP (gnirehtet / VPN)
+  # Check if the phone has a default route OR can reach a known IP
   adb_s sh -c '
     ip route 2>/dev/null | grep -q "^default " && exit 0
-    ip -4 addr 2>/dev/null | awk "/tun[0-9]+:/ {found=1} /inet / && /tun[0-9]+/ {has_ip=1} END{exit !(found && has_ip)}"
+    ping -c 1 -W 3 1.1.1.1 >/dev/null 2>&1 && exit 0
+    exit 1
   '
 }
 
 if phone_has_internet; then
-  note "phone already has internet"
+  note "phone has internet (via Wi-Fi)"
 else
-  # Check if gnirehtet is already running on the laptop (tun0 on phone has IP)
-  if adb_s ip -4 addr show tun0 2>/dev/null | grep -q 'inet '; then
-    note "gnirehtet tunnel already up on phone (tun0 has IP) — treating as online"
-  else
-    note "phone has no internet — trying USB tethering"
-    adb_s svc usb setFunctions rndis,adb >/dev/null 2>&1 || true
-    sleep 4
-    if ! phone_has_internet; then
-      note "USB function switch didn't take effect — starting gnirehtet reverse-tether"
-
-      # ---- gnirehtet (no-root reverse-tether over ADB) ----
-      GNIREHTET_VERSION="v2.5.1"
-      GNIREHTET_DIR="/tmp/gnirehtet-rust-linux64"
-      GNIREHTET_BIN="$GNIREHTET_DIR/gnirehtet"
-      GNIREHTET_APK="$GNIREHTET_DIR/gnirehtet.apk"
-      if [[ ! -x "$GNIREHTET_BIN" || ! -f "$GNIREHTET_APK" ]]; then
-        note "downloading gnirehtet $GNIREHTET_VERSION"
-        mkdir -p "$GNIREHTET_DIR"
-        curl -sSfL -o /tmp/gnirehtet.zip \
-          "https://github.com/Genymobile/gnirehtet/releases/download/$GNIREHTET_VERSION/gnirehtet-rust-linux64-$GNIREHTET_VERSION.zip"
-        unzip -o /tmp/gnirehtet.zip -d /tmp >/dev/null
-        chmod +x "$GNIREHTET_BIN"
-      fi
-      note "installing gnirehtet client APK on the phone"
-      adb install -r "$GNIREHTET_APK" >/dev/null
-
-      # kill any prior relay, then start a fresh one in the background
-      pkill -f 'gnirehtet run' 2>/dev/null || true
-      sleep 1
-      note "starting gnirehtet relay (port 31416) in background"
-      setsid nohup "$GNIREHTET_BIN" run "$DEVICE_SERIAL" \
-        < /dev/null > /tmp/gnirehtet.log 2>&1 &
-      disown
-      sleep 3
-
-      if ! phone_has_internet; then
-        echo
-        echo "  ┌──────────────────────────────────────────────────────────────────┐"
-        echo "  │  gnirehtet is running but the phone still has no tunnel.        │"
-        echo "  │  ACTION: on the phone, accept the 'Allow gnirehtet to set       │"
-        echo "  │  up a VPN connection?' prompt (check 'I trust this app' if      │"
-        echo "  │  shown, then tap OK). The script will continue automatically.  │"
-        echo "  └──────────────────────────────────────────────────────────────────┘"
-        echo
-        for i in $(seq 60 -5 5); do
-          if phone_has_internet; then
-            printf "\r  phone online via gnirehtet, continuing...      \n"
-            break
-          fi
-          printf "\r  waiting for VPN permission on the phone... %2ds " "$i"
-          sleep 5
-        done
-        if ! phone_has_internet; then
-          die "phone still offline after 60s. accept the gnirehtet VPN prompt and re-run."
-        fi
-      fi
+  echo
+  echo "  ┌──────────────────────────────────────────────────────────────────┐"
+  echo "  │  The phone has no internet. Termux needs working DNS.           │"
+  echo "  │                                                                  │"
+  echo "  │  On the phone:                                                   │"
+  echo "  │    • connect to a Wi-Fi network with working DNS                 │"
+  echo "  │    • or turn on mobile data                                      │"
+  echo "  │    • do NOT enable gnirehtet (it breaks Termux's DNS)            │"
+  echo "  │                                                                  │"
+  echo "  │  The script will continue automatically once online.             │"
+  echo "  └──────────────────────────────────────────────────────────────────┘"
+  echo
+  for i in $(seq 120 -5 5); do
+    if phone_has_internet; then
+      printf "\r  phone online, continuing...          \n"
+      break
     fi
+    printf "\r  waiting for network... %2ds " "$i"
+    sleep 5
+  done
+  if ! phone_has_internet; then
+    die "phone still offline after 120s. connect to Wi-Fi and re-run."
   fi
 fi
 
@@ -278,9 +253,9 @@ set -eu
 export DEBIAN_FRONTEND=noninteractive
 export APT_LISTCHANGES_FRONTEND=none
 
-# Write resolv.conf with a public DNS server. The phone's internet comes
-# through gnirehtet (reverse tunnel over ADB), so ALL traffic — including
-# DNS — goes through the laptop. 8.8.8.8 is resolved by the laptop's DNS.
+# Write resolv.conf with a public DNS server. On some Wi-Fi networks,
+# Termux's apt/pkg can't resolve hostnames because Android's DNS
+# resolver doesn't propagate to Termux's standalone binaries.
 # This must happen BEFORE pkg update, which overwrites resolv.conf.
 # Use || true because set -eu would kill the script if $PREFIX isn't set.
 echo "nameserver 8.8.8.8" > $PREFIX/etc/resolv.conf 2>/dev/null || true
