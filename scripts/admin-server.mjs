@@ -28,7 +28,7 @@ const execFileAsync = promisify(execFile);
 
 const PORT = parseInt(process.env.ADMIN_PORT || "8080", 10);
 const HOME = process.env.HOME || "/data/data/com.termux/files/home";
-const PROJECT_DIR = process.env.PROJECT_DIR || `${HOME}/grandpa-bob`;
+const PROJECT_DIR = process.env.PROJECT_DIR || `${HOME}/grandma-bob`;
 const ENV_PATH = `${PROJECT_DIR}/.env`;
 const BOT_LOG = `${HOME}/bot.log`;
 const SHERPA_LOG = `${HOME}/sherpa.log`;
