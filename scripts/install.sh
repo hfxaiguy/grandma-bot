@@ -124,6 +124,22 @@ fi
 # ---------- workspace patterns ----------
 mkdir -p "$WORKSPACE/patterns"
 
+# ---------- workspace sync ----------
+# Add desktop as a git remote for bidirectional workspace sync.
+# The desktop runs git-daemon on port 9418 serving a bare repo.
+DESKTOP_IP="__DESKTOP_IP__"
+SYNC_URL="git://$DESKTOP_IP/grandma-workspace.git"
+if ! git -C "$WORKSPACE" remote get-url sync >/dev/null 2>&1; then
+  note "adding sync remote ($SYNC_URL)"
+  git -C "$WORKSPACE" remote add sync "$SYNC_URL" || warn "failed to add sync remote"
+fi
+# Pull desktop changes (patterns, contacts db, etc.) — non-fatal if offline.
+if git -C "$WORKSPACE" pull --ff-only sync master 2>/dev/null; then
+  note "workspace synced from desktop"
+else
+  warn "workspace sync pull failed (desktop offline?)"
+fi
+
 # ---------- sherpa smoke test ----------
 SHERPA_RUN="env TMPDIR=$SHERPA_TMP LD_PRELOAD=$GLIBC_DIR/lib/libc.so.6 $GLIBC_LOADER --library-path $GLIBC_DIR/lib:$SHERPA_DIR/lib $SHERPA_BIN"
 if $SHERPA_RUN --help >/dev/null 2>&1; then

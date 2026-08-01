@@ -13,6 +13,7 @@ PHONE_PROJECT_DIR="grandma-bob"
 MODEL_DIR_NAME="sherpa-onnx-streaming-zipformer-en-2023-06-26"
 STAGE_DIR="/sdcard/Download/grandpa-bob-deploy"
 GRANDMA_KAT_URL="${GRANDMA_KAT_URL:-https://github.com/hfxaiguy/grandma-kat.git}"
+DESKTOP_IP="${DESKTOP_IP:-192.168.2.10}"
 
 # ---------- helpers ----------
 note() { printf '\033[1;36m[+]\033[0m %s\n' "$*"; }
@@ -147,6 +148,7 @@ sed \
   -e "s|__REPO_URL__|$REPO_URL|g" \
   -e "s|__STT_PORT__|$STT_PORT|g" \
   -e "s|__ADMIN_PORT__|$ADMIN_PORT|g" \
+  -e "s|__DESKTOP_IP__|$DESKTOP_IP|g" \
   "$SCRIPT_DIR/install.sh" > /tmp/gbot-install.sh
 adb push /tmp/gbot-install.sh "$STAGE_DIR/install.sh" >/dev/null
 rm /tmp/gbot-install.sh
