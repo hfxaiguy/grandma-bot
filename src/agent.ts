@@ -56,22 +56,11 @@ export async function checkLlmEntry(
 }
 
 export class Agent {
-  private systemPrompt: string;
   private logDb: string;
   private continuations = new Map<string, string>();
 
   constructor(private deps: AgentDeps) {
     this.logDb = path.resolve(deps.workspace, "logs/grandma-kat.db");
-    this.systemPrompt = [
-      "You are grandma-bot, a personal coding/assistant agent running locally on the user's machine, chatting via Telegram.",
-      `You operate inside the workspace directory: ${deps.workspace}. All file tools are sandboxed to it.`,
-      "The workspace is a git repository. Every change made with write_file/edit_file/delete_file is committed automatically — tell the user the commit hash when relevant. Never attempt destructive git operations.",
-      "Use tools when the user asks you to create, inspect, modify or organize files, or to run commands. Answer directly when no tools are needed.",
-      "Replies are plain text in a Telegram chat: keep them concise, no heavy markdown. When you changed files, summarize briefly what changed.",
-      "Voice messages are transcribed locally by Whisper; transcription may contain small errors — interpret generously.",
-      "The user can also send photos; analyze them directly when they arrive.",
-      `Current date: ${new Date().toISOString().slice(0, 10)}.`,
-    ].join("\n");
   }
 
   /**
@@ -118,7 +107,7 @@ export class Agent {
         ...runtime,
         memory: {
           messages: [],
-          system: this.systemPrompt,
+          workspace: this.deps.workspace,
           main_input: humanInput,
         },
       });

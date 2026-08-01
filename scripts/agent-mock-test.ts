@@ -34,7 +34,6 @@ const WORKSPACE_DIR = process.env.WORKSPACE_DIR || path.join(os.homedir(), "gran
 const agentPattern = await loadPattern(WORKSPACE_DIR);
 
 const tools = new ToolRegistry(ws, ["git", "cat", "ls"]);
-const system = "You are a test agent.";
 
 // Each model entry has its own call counter; the handler dispatches on
 // the `model` field (which grandma-kat passes as the entry's .model name,
@@ -101,7 +100,7 @@ const katRuntime = {
   // First knit: tree pauses at .human() immediately.
   const first = await grandma.knit(agentPattern, {
     ...katRuntime,
-    memory: { messages: [], system, main_input: "create mock.txt with 'mock content'" },
+    memory: { messages: [], workspace: ws, main_input: "create mock.txt with 'mock content'" },
   });
   assert.equal(first.status, "waiting", "first call should pause at .human()");
 
@@ -135,8 +134,8 @@ const katRuntime = {
   // classify one) plus the 1-message history. It then returns a tool call.
   const firstStrong = strongCalls[0];
   assert.ok(
-    String(firstStrong.messages[0].content).includes("test agent"),
-    "strong calls should use the main system prompt",
+    String(firstStrong.messages[0].content).includes(ws),
+    "strong calls should use the main system prompt (includes workspace path)",
   );
   assert.equal(firstStrong.messages.length, 2, "first strong call: system + 1 user msg");
 
@@ -171,7 +170,7 @@ const katRuntime = {
   // First knit: tree pauses at .human() immediately.
   const first = await grandma.knit(agentPattern, {
     ...katRuntime,
-    memory: { messages: [], system, main_input: "what's the capital of France?" },
+    memory: { messages: [], workspace: ws, main_input: "what's the capital of France?" },
   });
   assert.equal(first.status, "waiting", "first call should pause at .human()");
 
