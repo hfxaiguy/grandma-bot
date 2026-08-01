@@ -121,38 +121,8 @@ if [ ! -f "$HOME_DIR/models/__MODEL_DIR_NAME__/tokens.txt" ]; then
   tar -xjf "$STAGE/__MODEL_TARBALL_NAME__" -C "$HOME_DIR/models"
 fi
 
-# ---------- pattern registry ----------
+# ---------- workspace patterns ----------
 mkdir -p "$WORKSPACE/patterns"
-if [ ! -f "$WORKSPACE/patterns/agent.mjs" ]; then
-  note "creating default agent pattern"
-  cat > "$WORKSPACE/patterns/agent.mjs" <<'PATTERN'
-// agent.mjs — Standard agent loop: LLM → tools → LLM → answer
-export default async function agent(state) {
-  const response = await state.llm.chat("cheap", state.messages);
-  if (response.toolCalls && response.toolCalls.length > 0) {
-    const results = await state.tools.execute(response.toolCalls);
-    const followup = await state.llm.chat("cheap", [...state.messages, ...results]);
-    return followup.content;
-  }
-  return response.content;
-}
-PATTERN
-fi
-if [ ! -f "$WORKSPACE/patterns/research.mjs" ]; then
-  note "creating research pattern"
-  cat > "$WORKSPACE/patterns/research.mjs" <<'PATTERN'
-// research.mjs — cheap model routes, strong model answers
-export default async function research(state) {
-  const routing = await state.llm.chat("cheap", state.messages);
-  if (routing.toolCalls && routing.toolCalls.length > 0) {
-    const results = await state.tools.execute(routing.toolCalls);
-    const synthesis = await state.llm.chat("strong", [...state.messages, ...results]);
-    return synthesis.content;
-  }
-  return routing.content;
-}
-PATTERN
-fi
 
 # ---------- sherpa smoke test ----------
 SHERPA_RUN="env TMPDIR=$SHERPA_TMP LD_PRELOAD=$GLIBC_DIR/lib/libc.so.6 $GLIBC_LOADER --library-path $GLIBC_DIR/lib:$SHERPA_DIR/lib $SHERPA_BIN"
