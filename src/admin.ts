@@ -120,6 +120,19 @@ async function restartBot(projectDir: string, botSession: string) {
   ]);
 }
 
+// ── git sync ────────────────────────────────────────────────────────
+async function gitSync(workspaceDir: string, direction: "push" | "pull") {
+  const args = direction === "pull"
+    ? ["-C", workspaceDir, "pull", "--ff-only", "sync", "master"]
+    : ["-C", workspaceDir, "push", "sync", "master"];
+  try {
+    const { stdout, stderr } = await execFileAsync("git", args, { timeout: 30000 });
+    return { ok: true, output: (stdout + stderr).trim() };
+  } catch (e: any) {
+    return { ok: false, output: (e.stdout || "") + (e.stderr || e.message) };
+  }
+}
+
 // ── pattern registry ──────────────────────────────────────────────────
 const PATTERNS_DIR_NAME = "patterns";
 
@@ -290,6 +303,16 @@ function buildHtml(config: AdminConfig): string {
 </div>
 
 <div class="card">
+  <h2 style="margin-top:0">Workspace sync</h2>
+  <p style="margin:4px 0"><small>Push/pull the workspace to/from the desktop's git-daemon (port 9418). The bot auto-commits file changes; use these to sync with the desktop.</small></p>
+  <div id="sync-status" style="margin:8px 0; font:12px ui-monospace,monospace; color:var(--muted)">(not synced yet)</div>
+  <div class="actions">
+    <button onclick="gitPull()">Pull from desktop</button>
+    <button onclick="gitPush()">Push to desktop</button>
+  </div>
+</div>
+
+<div class="card">
   <h2 style="margin-top:0">Credentials</h2>
   <form id="envForm" onsubmit="saveEnv(event)">
     <div class="grid-2">
@@ -418,6 +441,24 @@ async function saveEnv(e) {
 
 async function restartBot() {
   try { await api("/api/restart-bot", { method: "POST" }); toast("bot restarting..."); setTimeout(refreshStatus, 2000); } catch {}
+}
+
+async function gitPull() {
+  $("sync-status").textContent = "pulling...";
+  try {
+    const r = await api("/api/sync/pull", { method: "POST" });
+    $("sync-status").textContent = r.output || "(no output)";
+    toast(r.ok ? "pulled" : "pull failed", !r.ok);
+  } catch (e) { $("sync-status").textContent = "error: " + e.message; }
+}
+
+async function gitPush() {
+  $("sync-status").textContent = "pushing...";
+  try {
+    const r = await api("/api/sync/push", { method: "POST" });
+    $("sync-status").textContent = r.output || "(no output)";
+    toast(r.ok ? "pushed" : "push failed", !r.ok);
+  } catch (e) { $("sync-status").textContent = "error: " + e.message; }
 }
 
 async function loadLog(name) {
@@ -622,6 +663,20 @@ export function startAdmin(cfg?: Partial<AdminConfig>): http.Server {
         await restartBot(config.projectDir, config.botSession);
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/sync/pull") {
+        const result = await gitSync(config.workspaceDir, "pull");
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(result));
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/sync/push") {
+        const result = await gitSync(config.workspaceDir, "push");
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(result));
         return;
       }
 
