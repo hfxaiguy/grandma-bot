@@ -39,7 +39,6 @@ export const config = {
     .map((s) => s.trim())
     .filter(Boolean),
   maxToolIterations: 12,
-  historyLimit: 60,
 };
 
 export type Config = typeof config;

@@ -38,10 +38,10 @@ every change it makes is **git-committed automatically**.
     │                 │ transcript
     ▼                 ▼
 ┌─────────────────────────────────────────────────────────────┐
-│ agent.ts — tool-calling loop (max 12 iterations)            │
-│  · system prompt rebuilt fresh each turn                    │
-│  · history.ts: per-topic memory, 60 msgs, in-memory only    │
-│  · strips Gemma 4 <|channel>thought… tags from replies      │
+│ agent.ts — continuous tree with pause/resume                │
+│  · continuation tokens store full tree state per topic      │
+│  · grandma-kat owns history, memory, scope chain            │
+│  · .human() pauses for input, .emit() sends output          │
 └───┬─────────────────────────────────────────────────────────┘
     │ OpenAI-compatible POST /v1/chat/completions (+ tool schemas)
     ▼
@@ -62,6 +62,30 @@ every change it makes is **git-committed automatically**.
 └─────────────────────────────────────────────────────────────┘
 ```
 
+### How the continuous tree works
+
+The agent runs as a single **grandma-kat tree** that loops forever:
+
+```
+Tree.name("agent")
+  .human("main_input")           ← pause: wait for user input
+  .memoryUpdate("messages", …)   ← append user message to history
+  .branch(classify)              ← cheap model: "tools" | "direct"
+  .branch(when "direct", direct) ← cheap model: text-only answer
+  .branch(when "tools", tools)   ← strong model: tool-using loop
+  .emit(…)                       ← non-blocking output to Telegram
+  .until(true)                   ← loop back to .human()
+```
+
+- **`.human()`** pauses the tree and saves a checkpoint to SQLite. The
+  continuation token is stored per conversation. On the next message,
+  `grandma.knit()` resumes from the checkpoint with the new input.
+- **`.emit()`** sends output to Telegram without stopping the tree. The
+  bot wires `onEmit` to `ctx.reply()`.
+- **History** lives in the tree's `messages` memory slot — no external
+  `HistoryStore`. The continuation token persists the full scope chain
+  (memory, history, execution position) in `<workspace>/logs/grandma-kat.db`.
+
 ### Journey of a voice message ("add milk to shopping.md")
 
 1. grammY receives the voice note; the auth middleware checks your user ID.
@@ -69,14 +93,15 @@ every change it makes is **git-committed automatically**.
 3. `stt.ts` fetches the file path via Bot API `getFile`, downloads the `.ogg`,
    converts it with ffmpeg to 16 kHz mono PCM WAV, and POSTs it to whisper-server.
 4. The bot replies `heard: "add milk to shopping.md"` in the same topic.
-5. The transcript is appended to the topic's history; `agent.ts` calls the LLM
-   with the tool schemas.
-6. Gemma decides to call `read_file` → result appended → `edit_file` → result
-   appended → final text answer. Each tool error would go back to the model as a
-   normal string so it can retry.
+5. `agent.run(key, transcript, onEmit)` resumes the tree from its checkpoint.
+   The tree's `.memoryUpdate()` appends the user message to the `messages` slot.
+6. The classify branch routes to the tools branch. Gemma decides to call
+   `read_file` → result appended → `edit_file` → result appended → final text
+   answer. Each tool error goes back to the model as a normal string so it can retry.
 7. `edit_file` writes the file, then `git.ts` commits just that path and returns
    the short hash, which flows back into the tool result.
-8. The final answer is chunked to ≤4000 chars and sent to the topic.
+8. The `.emit()` child calls `onEmit(text)` — the bot sends the answer to Telegram.
+9. The tree loops back to `.human()` and pauses. Continuation stored.
 
 ### Layout
 
@@ -86,15 +111,14 @@ src/
   config.ts       .env loading/validation (non-model config only)
   models.ts       models.json loader, built-in transforms
   bot.ts          grammY bot: auth gate, forum topics, text/voice/photo, queues
-  agent.ts        LLM tool-calling loop (OpenAI-compatible)
-  history.ts      per-topic in-memory conversation history
+  agent.ts        continuation storage, tree runner (grandma-kat pause/resume)
   stt.ts          Telegram voice download → ffmpeg → whisper-server
   patterns/
     shared.ts     types (KatPromptRecord), memory-view accessors, history helpers
     classify.ts   classify branch — cheap model: "tools" or "direct"
     direct.ts     direct branch — cheap model: text-only answer
     tools.ts      tools branch — strong model: tool-using loop
-    agent.ts      root tree — imports and composes the three branches
+    agent.ts      root tree — .human() + branches + .emit() + .until()
   tools/
     index.ts      tool schemas (OpenAI format) + dispatcher
     files.ts      list/read/write/edit/delete, sandboxed, auto-committing
@@ -108,25 +132,25 @@ scripts/
 vendor/whisper.cpp/   whisper.cpp Vulkan build (gitignored)
 ```
 
-### Design principle: branches are standalone trees
+### Design principle: patterns live in the workspace
 
-Each branch in the agent pattern lives in its own file under `src/patterns/`
-and exports a single `Tree.name(...)` definition. The root tree in
-`patterns/agent.ts` imports the branches it needs and composes them with
-`.branch()` and `when()` gates. There is no registry, no runtime discovery,
-no plugin system — just imports and composition.
+The agent's behavior is defined by a single `.mjs` file in the workspace:
+`workspace/patterns/agent.mjs`. This file exports a function that receives
+the grandma-kat Tree builder API and returns a Tree definition.
 
-To add a new behavior to the agent:
+The agent loads the pattern on each turn, so changes take effect immediately
+— no restart needed. The agent can also modify its own patterns using its
+file tools, enabling self-modification.
 
-1. Create `src/patterns/my-branch.ts`, export a named `Tree`.
-2. Import it in `src/patterns/agent.ts`.
-3. `.branch()` it onto the root (with a `when()` gate if conditional).
+To change the agent's behavior:
 
-Branches never import each other. If a branch needs something from another
-branch, it reads from the grandma-kat memory scope chain (e.g.
-`m.branch.classify`), not by importing the sibling. The branches are plain
-values; the tree is plain data. Shared types and helpers live in
-`patterns/shared.ts`.
+1. Edit `workspace/patterns/agent.mjs` (via the admin UI, a text editor, or
+   the agent itself).
+2. The next conversation turn uses the updated pattern.
+
+The pattern file is a single `.mjs` file that contains the full tree
+(root + branches + helpers). No imports needed — the Tree builder API
+is passed as function arguments.
 
 The **workspace** (agent sandbox + git repo) lives OUTSIDE the project by default
 (`~/grandma-workspace`, see `WORKSPACE_DIR`) so its git history is fully
@@ -235,9 +259,8 @@ git -C ~/grandma-workspace config user.email grandma-bot@localhost
 
 **What happens if I delete the workspace directory?**
 On the next boot, `index.ts` recreates it (`mkdir -p`) and `ensureRepo` runs
-`git init`. You lose the git history, nothing else. The bot never stores state
-anywhere else except in-memory conversation history and
-`<workspace>/logs/grandma-kat.db` (the grandma-kat SQLite audit log, see below).
+`git init`. You lose the git history and the grandma-kat SQLite log (which
+holds continuation tokens and the audit trail). All conversations start fresh.
 
 **Where does the run log live?**
 The grandma-kat runner writes every LLM call, tool call, check, goback, and
@@ -266,12 +289,13 @@ the project's status.
 ### Agent & LLM
 
 **What does one agent turn actually look like?**
-`runTurn()` prepends a fresh system prompt to the topic's history and calls
-`chat.completions.create` with the six tool schemas. If the reply contains
-`tool_calls`, each is executed and its result appended as a `tool` message, then
-the loop repeats — up to `maxToolIterations` (12). The first reply *without* tool
-calls is the final answer: thought tags are stripped, it's persisted to history,
-and returned.
+`agent.run(key, message, onEmit)` resumes the tree from its saved checkpoint.
+The tree's `.memoryUpdate()` appends the user message to `messages`, the classify
+branch routes to direct or tools, the response branch generates an answer (possibly
+with tool calls in a loop), and `.emit()` sends the answer to Telegram via `onEmit`.
+The tree then loops back to `.human()` and pauses — checkpoint saved, continuation
+stored. On the first message of a new conversation, `knit()` starts fresh and pauses
+at `.human()` immediately (no LLM call until the user sends something).
 
 **Why do tool errors not crash the turn?**
 `ToolRegistry.dispatch` wraps every tool in try/catch and returns errors as plain
@@ -280,10 +304,11 @@ as a normal tool result and typically self-corrects (re-reads the file, adjusts)
 Only LLM/transport errors propagate up to the user as "Something went wrong".
 
 **What happens at the 12-iteration limit?**
-The turn ends with `"(stopped: reached the tool-iteration limit)"`. This is the
-runaway-loop guard: a confused model ping-ponging between tools can't burn tokens
-forever. Your user message stays in history (the abandoned tool-call trace does
-not), so `/clear` is your friend if a conversation goes sideways.
+The tools branch's `until` loop throws a `KnitError` with `"tool-iteration limit"`.
+This surfaces in Telegram as "Something went wrong: tool-iteration limit: …". The
+continuation for that topic is preserved — the next message starts a fresh tree
+(the error doesn't corrupt the checkpoint). Use `/clear` if a conversation goes
+sideways.
 
 **Why does tool support depend on the *provider*, not just the model?**
 On the HF router, each provider serves the same weights with its own chat template
@@ -301,35 +326,34 @@ also follows the model card's guidance: no thoughts in multi-turn history —
 need its own reasoning to interpret tool results).
 
 **What gets remembered, and for how long?**
-(See "So… are there sessions?" for the full model.) Per topic, in RAM only: up
-to 60 messages (`historyLimit`), FIFO-trimmed. The
-system prompt is *not* stored — it's rebuilt each turn (so the date is always
-current). Restarting the bot wipes all conversation memory; `/clear` wipes one
-topic. The workspace and its git log are the only persistent memory.
+The tree's `messages` memory slot holds the full conversation history (user messages,
+assistant replies, tool exchanges). This is persisted in the continuation token —
+the checkpoint saved to `<workspace>/logs/grandma-kat.db` at every `.human()` pause.
+History survives bot restarts (the SQLite DB is on disk). `/clear` drops the
+continuation for that topic, starting fresh. The workspace and its git log are
+the other persistent memory — the agent can always re-read files to re-orient.
 
 **Do photos get re-billed every turn?**
-Yes — images stay in history as base64 data URLs and are re-sent (and re-charged
-as image tokens) on every subsequent turn until they rotate out of the 60-message
-window. Gemma 4 uses 70–1120 tokens per image depending on provider settings, so
-this is modest, but worth knowing before a photo-heavy session.
+Yes — images stay in the `messages` history as base64 data URLs and are re-sent
+(and re-charged as image tokens) on every subsequent turn. Gemma 4 uses 70–1120
+tokens per image depending on provider settings, so this is modest, but worth
+knowing before a photo-heavy session. Use `/clear` to drop a conversation if
+token usage gets high.
 
 ### Telegram & topics
 
 **So… are there sessions?**
-Not as a formal object — a "session" is just one entry in the `HistoryStore`
-(`src/history.ts`): a `Map<chatId:threadId, messages[]>` created lazily on the
-first message. Lifecycle: **born** on the topic's first message; **trimmed**
-FIFO at 60 messages (no summarization — old pairs just drop off); **dies** on
-`/clear` or a bot restart (RAM only, never written to disk). A session holds
-*only* user messages and final assistant answers — not the system prompt
-(rebuilt fresh each turn), not tool-call traces (those live only within their
-own turn; next turn the model sees its own summary, not raw tool outputs), and
-no other state — no profiles, settings, or counters. Turns within a session are
-strictly serialized by the per-topic promise queue; across sessions everything
-runs in parallel. Net effect: each LLM call sees the system prompt plus at most
-the last 60 messages of *that one topic*, and after a restart every conversation
-starts cold — the workspace (files + `git log`) is the only long-term memory,
-which the agent can always re-read to re-orient.
+Yes — a "session" is a continuation token stored per conversation key
+(`chatId:threadId`). The token is a checkpoint ID in the grandma-kat SQLite
+log that captures the full tree state: memory slots (including `messages`),
+execution position, scope chain. Lifecycle: **born** on the topic's first
+message (tree pauses at `.human()`); **lives** as a checkpoint in
+`<workspace>/logs/grandma-kat.db`; **cleared** by `/clear` (drops the
+continuation, next message starts a new tree). The system prompt is injected
+once at tree creation and persists across the entire conversation. Tool-call
+traces are part of the messages history. Turns within a session are strictly
+serialized by the per-topic promise queue; across sessions everything runs in
+parallel.
 
 **How do forum topics become separate conversations?**
 Every message in a topic group carries `message_thread_id`. The bot keys history

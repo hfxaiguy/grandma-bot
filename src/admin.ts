@@ -325,7 +325,7 @@ function buildHtml(config: AdminConfig): string {
 
 <div class="card">
   <h2 style="margin-top:0">Tree patterns</h2>
-  <p style="margin:4px 0"><small>JSON tree-runtime patterns for the agent loop. Contributors can write their own in <code>workspace/patterns/</code> and share them.</small></p>
+  <p style="margin:4px 0"><small>grandma-kat Tree patterns (<code>.mjs</code>) in <code>workspace/patterns/</code>. The agent loads <code>agent.mjs</code> on each turn — edit it to change behavior without restarting. The agent can also modify its own patterns using file tools.</small></p>
   <div id="pattern-list">(loading...)</div>
   <div class="actions">
     <button class="secondary" onclick="refreshPatterns()">Refresh</button>
@@ -464,21 +464,26 @@ function showNewPattern() {
   $("p-name").value = "";
   $("p-code").value = \`// my-pattern.mjs — description of what this pattern does
 //
-// Available in state:
-//   state.llm.chat(model, messages) — call the LLM
-//   state.tools.execute(toolCalls) — execute tool calls
-//   state.messages — the conversation history
+// The function receives the Tree builder API as arguments.
+// Available: { Tree, when, goback, max }
 //
-// model names: "cheap" (fast, routing) or "strong" (slow, tool-heavy)
+// Must return a Tree definition (the result of Tree.name(...).branch(...).until(...)).
+//
+// Memory slots available in prompt functions (m):
+//   m.system      — the system prompt string
+//   m.messages    — conversation history array [{role, content}, ...]
+//   m.main_input  — the current user message
+//   m.branch.X    — exported value of branch X
+//   m.prev[i]     — most-recent-first sibling outputs
+//   m.raw.prev[i] — full record: { content, reasoning, toolCalls, toolResults }
+//   m.error       — feedback from last failed check
 
-export default async function myPattern(state) {
-  const response = await state.llm.chat("cheap", state.messages);
-  if (response.toolCalls && response.toolCalls.length > 0) {
-    const results = await state.tools.execute(response.toolCalls);
-    const followup = await state.llm.chat("cheap", [...state.messages, ...results]);
-    return followup.content;
-  }
-  return response.content;
+export default function({ Tree, when, goback, max }) {
+  return Tree.name("my-pattern")
+    .human("main_input")
+    .prompt((m) => "You said: " + m.main_input + ". Respond briefly.")
+    .emit((m) => m.prev[0])
+    .until(() => false, max(100000));
 }
 \`;
   $("pattern-editor").style.display = "block";

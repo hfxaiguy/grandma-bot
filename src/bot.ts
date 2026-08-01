@@ -1,8 +1,6 @@
 import { Bot } from "grammy";
 import type { Context } from "grammy";
-import type { ChatCompletionUserMessageParam } from "openai/resources/chat/completions";
 import type { Agent } from "./agent.js";
-import type { HistoryStore } from "./history.js";
 import type { ModelRegistry } from "./models.js";
 import { transcribeVoice, type SttBackend } from "./stt.js";
 import { git } from "./tools/git.js";
@@ -19,7 +17,6 @@ export interface BotDeps {
   /** Named model registry; the bot's /status command shows all entries. */
   models: ModelRegistry;
   agent: Agent;
-  history: HistoryStore;
 }
 
 const MAX_TG_MESSAGE = 4000;
@@ -76,7 +73,7 @@ export function createBot(deps: BotDeps): Bot {
   });
 
   bot.command("clear", async (ctx) => {
-    deps.history.clear(convKey(ctx));
+    deps.agent.clear(convKey(ctx));
     await reply(ctx, "Conversation context cleared for this topic.");
   });
 
@@ -101,7 +98,12 @@ export function createBot(deps: BotDeps): Bot {
     );
   });
 
-  const handleUserContent = async (ctx: Context, content: ChatCompletionUserMessageParam["content"]): Promise<void> => {
+  /**
+   * Run the agent tree for one turn. The tree emits responses via
+   * `onEmit` (which sends them to Telegram) and pauses at `.human()`
+   * for the next message. The continuation is stored automatically.
+   */
+  const handleUserContent = async (ctx: Context, content: string | unknown[]): Promise<void> => {
     const key = convKey(ctx);
     // keep the "typing…" indicator alive while the agent works
     const typing = setInterval(() => {
@@ -109,9 +111,11 @@ export function createBot(deps: BotDeps): Bot {
     }, 4500);
     await ctx.api.sendChatAction(ctx.chat!.id, "typing", threadOpts(ctx)).catch(() => {});
     try {
-      const messages = deps.history.appendUser(key, content);
-      const answer = await deps.agent.runTurn(messages);
-      await reply(ctx, answer);
+      await deps.agent.run(key, content, async (value) => {
+        // onEmit: send each emitted value to Telegram immediately.
+        const text = typeof value === "string" ? value : JSON.stringify(value);
+        if (text) await reply(ctx, text);
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[agent]", err);

@@ -1,29 +1,29 @@
 import path from "node:path";
 // @ts-ignore — grandma-kat ships no .d.ts files.
 import grandma from "grandma-kat";
-import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import type { ToolRegistry } from "./tools/index.js";
 import type { ModelRegistry } from "./models.js";
-import { agentPattern } from "./patterns/agent.js";
+import { loadPattern } from "./pattern-loader.js";
 
 export interface AgentDeps {
   /** Named LLM registry (e.g. { cheap, strong }) from models.json or env. */
   models: ModelRegistry;
   /**
    * Workspace directory. The grandma-kat SQLite log lives at
-   * `<workspace>/logs/grandma-kat.db` (with WAL/SHM siblings) — it
-   * contains user data (prompts, responses, tool calls) so it stays
-   * next to the user's files. The directory is created and added to
-   * the workspace's `.gitignore` at startup by `index.ts`.
+   * `<workspace>/logs/grandma-kat.db` — it contains user data
+   * (prompts, responses, tool calls) so it stays next to the user's
+   * files.
    */
   workspace: string;
   tools: ToolRegistry;
 }
 
-// stripThought is no longer needed here — the per-model `transform`
-// hook in grandma-kat's llm.mjs strips Gemma 4's <|channel> tags and
-// populates the reasoning field before the response reaches the pattern.
-// The content arriving at runTurn is already clean.
+export interface AgentRunResult {
+  /** "waiting" = tree paused at .human(), continuation stored. */
+  status: "waiting";
+  /** Continuation token (checkpoint ID). Store for next run. */
+  continuation: string;
+}
 
 /**
  * Ping the LLM endpoint to check reachability. Returns true on any 2xx,
@@ -49,9 +49,7 @@ export async function checkLlmEntry(
       headers: apiKey && apiKey !== "no-key" ? { Authorization: `Bearer ${apiKey}` } : {},
     });
     clearTimeout(t);
-    // A non-5xx response means the server is alive and reachable.
-    // 4xx errors (auth, not found) are still "reachable" — just misconfigured.
-    return res.status < 500;
+    return res.ok;
   } catch {
     return false;
   }
@@ -60,12 +58,9 @@ export async function checkLlmEntry(
 export class Agent {
   private systemPrompt: string;
   private logDb: string;
+  private continuations = new Map<string, string>();
 
   constructor(private deps: AgentDeps) {
-    // SQLite log lives inside the workspace, not the project root — it
-    // contains user prompts/responses and should travel with the user's
-    // data when they back up the workspace. Caller (index.ts) is
-    // responsible for creating the directory and updating .gitignore.
     this.logDb = path.resolve(deps.workspace, "logs/grandma-kat.db");
     this.systemPrompt = [
       "You are grandma-bot, a personal coding/assistant agent running locally on the user's machine, chatting via Telegram.",
@@ -80,37 +75,70 @@ export class Agent {
   }
 
   /**
-   * Run one conversational turn: appends to `messages` (which must not
-   * include the system message) until the model produces a final text
-   * answer.
+   * Run one turn of a continuous conversation. The tree pauses at
+   * `.human()` between messages; the continuation token persists the
+   * full tree state (memory, history, scope chain) in the SQLite log.
    *
-   * The control flow is a grandma-kat tree (`patterns/agent.ts`): a
-   * cheap model classifies the latest user message as "direct" or
-   * "tools"; the former is answered by the cheap model, the latter
-   * runs the full tool-using loop on the strong model. The tree's
-   * `result` is the final assistant text; `memory.messages` is the
-   * updated history. Every LLM call, tool call, and flow-control
-   * decision is logged to `<workspace>/logs/grandma-kat.db`.
+   * @param key         Conversation key (e.g. "chatId:threadId").
+   * @param humanInput  The user's message text.
+   * @param onEmit      Callback for non-blocking output (`.emit()` calls).
+   * @returns           `{ status: "waiting", continuation }` — store the
+   *                    continuation for the next run.
    */
-  async runTurn(messages: ChatCompletionMessageParam[]): Promise<string> {
-    const { result, memory } = await grandma.knit(agentPattern, {
+  async run(
+    key: string,
+    humanInput: string | unknown[],
+    onEmit?: (value: unknown) => void | Promise<void>,
+  ): Promise<AgentRunResult> {
+    const cont = this.continuations.get(key);
+    const katTools = this.deps.tools.toKatTools();
+    const pattern = await loadPattern(this.deps.workspace);
+
+    const runtime: Record<string, unknown> = {
       models: this.deps.models,
-      tools: this.deps.tools.toKatTools(),
-      memory: { messages, system: this.systemPrompt },
+      tools: katTools,
       logger: this.logDb,
       logLevel: "info",
-    });
+      onEmit,
+    };
 
-    // Copy the updated history back onto the caller's array (same
-    // reference the HistoryStore holds). `memory.messages` is the root
-    // scope's "messages" slot, which the pattern's memoryUpdate calls
-    // wrote to across all until() passes.
-    const updated = (memory as { messages?: ChatCompletionMessageParam[] }).messages ?? messages;
-    messages.length = 0;
-    messages.push(...updated);
+    let outcome: { status?: string; continuation?: string };
 
-    // The transform hook already stripped thinking tags and populated
-    // reasoning — result is clean content.
-    return String(result ?? "") || "(empty response)";
+    if (cont) {
+      // Resume from checkpoint.
+      outcome = await grandma.knit(pattern, {
+        ...runtime,
+        _continuation: cont,
+        humanInput: { main_input: humanInput },
+      });
+    } else {
+      // First run: inject system prompt and start the tree.
+      // The tree pauses immediately at .human() — no LLM call yet.
+      outcome = await grandma.knit(pattern, {
+        ...runtime,
+        memory: {
+          messages: [],
+          system: this.systemPrompt,
+          main_input: humanInput,
+        },
+      });
+    }
+
+    if (outcome.status === "waiting" && outcome.continuation) {
+      this.continuations.set(key, outcome.continuation);
+      return { status: "waiting", continuation: outcome.continuation };
+    }
+
+    // Shouldn't happen with the agent pattern (it always pauses at .human()),
+    // but handle gracefully.
+    throw new Error("agent tree completed unexpectedly — should loop at .human()");
+  }
+
+  /**
+   * Clear the continuation for a conversation. The next `run()` will
+   * start a fresh tree. Used for `/clear` or error recovery.
+   */
+  clear(key: string): void {
+    this.continuations.delete(key);
   }
 }

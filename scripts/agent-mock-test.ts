@@ -17,7 +17,7 @@
 import assert from "node:assert/strict";
 // @ts-ignore — grandma-kat ships no .d.ts files.
 import grandma from "grandma-kat";
-import { agentPattern } from "../src/patterns/agent.js";
+import { loadPattern } from "../src/pattern-loader.js";
 import { ToolRegistry } from "../src/tools/index.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 
@@ -28,6 +28,10 @@ import { ensureRepo, git } from "../src/tools/git.js";
 
 const ws = await fs.mkdtemp(path.join(os.tmpdir(), "grandma-mock-test-"));
 await ensureRepo(ws);
+
+// Load pattern from the real workspace.
+const WORKSPACE_DIR = process.env.WORKSPACE_DIR || path.join(os.homedir(), "grandma-workspace");
+const agentPattern = await loadPattern(WORKSPACE_DIR);
 
 const tools = new ToolRegistry(ws, ["git", "cat", "ls"]);
 const system = "You are a test agent.";
@@ -80,24 +84,39 @@ const handler = async (messages: ChatCompletionMessageParam[], ctx: Ctx) => {
   return { content: "Done — wrote mock.txt.", reasoning: null, tool_calls: [] };
 };
 
+const katRuntime = {
+  models: {
+    cheap: { model: "cheap", handler },
+    strong: { model: "strong", handler },
+  },
+  tools: tools.toKatTools(),
+  logger: false,
+};
+
 // ── Subtest 1: tools path ────────────────────────────────────────────────
 {
-  const messages: ChatCompletionMessageParam[] = [
-    { role: "user", content: "create mock.txt with 'mock content'" },
-  ];
+  const emitted: unknown[] = [];
   calls.length = 0;
-  const { result, memory } = await grandma.knit(agentPattern, {
-    models: {
-      cheap: { model: "cheap", handler },
-      strong: { model: "strong", handler },
-    },
-    tools: tools.toKatTools(),
-    memory: { messages, system },
-    logger: false,
+
+  // First knit: tree pauses at .human() immediately.
+  const first = await grandma.knit(agentPattern, {
+    ...katRuntime,
+    memory: { messages: [], system, main_input: "create mock.txt with 'mock content'" },
   });
+  assert.equal(first.status, "waiting", "first call should pause at .human()");
+
+  // Resume: tree processes the message, emits, pauses again.
+  const resumed = await grandma.knit(agentPattern, {
+    ...katRuntime,
+    _continuation: first.continuation,
+    humanInput: { main_input: "create mock.txt with 'mock content'" },
+    onEmit: (v: unknown) => emitted.push(v),
+  });
+  assert.equal(resumed.status, "waiting", "resumed call should pause at .human() again");
 
   console.log("--- tools path ---");
   console.log("calls:", calls.map((c) => `${c.model}(${c.messages.length}m)`).join(", "));
+  console.log("emitted:", emitted);
 
   // 1 classify (cheap) + 1 strong(tool_call) + 1 strong(final) = 3 calls.
   const cheapCalls = calls.filter((c) => c.model === "cheap");
@@ -128,19 +147,9 @@ const handler = async (messages: ChatCompletionMessageParam[], ctx: Ctx) => {
   assert.equal(strongCalls[1].messages[3].role, "tool");
   assert.equal(strongCalls[1].messages[3].tool_call_id, "call_1");
 
-  // The tree's exported value is the final assistant text.
-  assert.equal(result, "Done — wrote mock.txt.");
-
-  // The runner updated the root's "messages" slot across both until()
-  // passes. The user's history has all 4 entries.
-  const finalHistory = (memory as { messages: ChatCompletionMessageParam[] }).messages;
-  assert.equal(finalHistory.length, 4, `expected 4 history messages, got ${finalHistory.length}`);
-  assert.equal(finalHistory[0].role, "user");
-  assert.equal(finalHistory[1].role, "assistant");
-  assert.ok(Array.isArray(finalHistory[1].tool_calls));
-  assert.equal(finalHistory[2].role, "tool");
-  assert.equal(finalHistory[3].role, "assistant");
-  assert.equal(finalHistory[3].content, "Done — wrote mock.txt.");
+  // The emit captured the response text.
+  assert.equal(emitted.length, 1, "expected 1 emit");
+  assert.equal(emitted[0], "Done — wrote mock.txt.");
 
   // Side effect: file written + auto-committed.
   const content = await fs.readFile(path.join(ws, "mock.txt"), "utf8");
@@ -156,37 +165,37 @@ const handler = async (messages: ChatCompletionMessageParam[], ctx: Ctx) => {
   await fs.mkdir(ws, { recursive: true });
   await ensureRepo(ws);
 
-  const messages: ChatCompletionMessageParam[] = [
-    { role: "user", content: "what's the capital of France?" },
-  ];
+  const emitted: unknown[] = [];
   calls.length = 0;
-  const { result, memory } = await grandma.knit(agentPattern, {
-    models: {
-      cheap: { model: "cheap", handler },
-      strong: { model: "strong", handler },
-    },
-    tools: tools.toKatTools(),
-    memory: { messages, system },
-    logger: false,
+
+  // First knit: tree pauses at .human() immediately.
+  const first = await grandma.knit(agentPattern, {
+    ...katRuntime,
+    memory: { messages: [], system, main_input: "what's the capital of France?" },
   });
+  assert.equal(first.status, "waiting", "first call should pause at .human()");
+
+  // Resume: tree processes the message, emits, pauses again.
+  const resumed = await grandma.knit(agentPattern, {
+    ...katRuntime,
+    _continuation: first.continuation,
+    humanInput: { main_input: "what's the capital of France?" },
+    onEmit: (v: unknown) => emitted.push(v),
+  });
+  assert.equal(resumed.status, "waiting", "resumed call should pause at .human() again");
 
   console.log("--- direct path ---");
   console.log("calls:", calls.map((c) => `${c.model}(${c.messages.length}m)`).join(", "));
+  console.log("emitted:", emitted);
 
   const cheapCalls = calls.filter((c) => c.model === "cheap");
   const strongCalls = calls.filter((c) => c.model === "strong");
   assert.equal(cheapCalls.length, 2, "expected 2 cheap calls (classify + direct)");
   assert.equal(strongCalls.length, 0, "strong model must not be called on the direct path");
 
-  // The tree's exported value is the cheap model's text.
-  assert.equal(result, "Direct answer from cheap model.");
-
-  // History just gets the final assistant turn appended.
-  const finalHistory = (memory as { messages: ChatCompletionMessageParam[] }).messages;
-  assert.equal(finalHistory.length, 2);
-  assert.equal(finalHistory[0].role, "user");
-  assert.equal(finalHistory[1].role, "assistant");
-  assert.equal(finalHistory[1].content, "Direct answer from cheap model.");
+  // The emit captured the response text.
+  assert.equal(emitted.length, 1, "expected 1 emit");
+  assert.equal(emitted[0], "Direct answer from cheap model.");
 }
 
 await fs.rm(ws, { recursive: true, force: true });

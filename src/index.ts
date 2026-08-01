@@ -4,7 +4,6 @@ import { config } from "./config.js";
 import { ensureRepo, ensureWorkspaceGitignore } from "./tools/git.js";
 import { ToolRegistry } from "./tools/index.js";
 import { Agent, checkLlmEntry } from "./agent.js";
-import { HistoryStore } from "./history.js";
 import { loadModels } from "./models.js";
 import { createBot } from "./bot.js";
 import { checkStt } from "./stt.js";
@@ -23,7 +22,6 @@ async function main(): Promise<void> {
   const tools = new ToolRegistry(config.workspaceDir, config.allowedCommands);
   const models = await loadModels();
   const agent = new Agent({ models, workspace: config.workspaceDir, tools });
-  const history = new HistoryStore(config.historyLimit);
 
   const modelReachable = await Promise.all(
     Object.entries(models).map(async ([name, m]) => [name, await checkLlmEntry(m.baseURL, m.apiKey, m.protocol)] as const),
@@ -59,7 +57,6 @@ async function main(): Promise<void> {
     sttLanguage: config.sttLanguage,
     models,
     agent,
-    history,
   });
 
   process.once("SIGINT", () => bot.stop());
