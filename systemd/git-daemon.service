@@ -1,0 +1,20 @@
+[Unit]
+Description=Git daemon for grandma-workspace sync
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=GIT_DAEMON_IP=192.168.2.10
+ExecStart=/usr/bin/git daemon \
+  --reuseaddr \
+  --base-path=%h \
+  --export-all \
+  --listen=${GIT_DAEMON_IP} \
+  --port=9418 \
+  --verbose \
+  %h/grandma-workspace.git
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
