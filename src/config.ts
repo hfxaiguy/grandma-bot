@@ -16,6 +16,7 @@ const DEFAULT_COMMANDS = [
   "ls", "cat", "head", "tail", "wc", "find", "rg", "grep", "pwd",
   "git", "mkdir", "touch", "date", "file", "stat", "du", "df",
   "diff", "which", "echo", "sort", "uniq",
+  "comms",
 ];
 
 export const config = {

@@ -13,11 +13,26 @@ const GIT_DENY = new Set([
   "checkout", "switch", "restore", "update-index", "filter-branch", "gc",
 ]);
 
+/**
+ * Resolve `node_modules/.bin` relative to the project root (two levels
+ * up from this file: src/tools/shell.ts → project root).  Prepended to
+ * PATH so any npm-installed binary is available by name.
+ */
+function npmBinPath(): string {
+  // fileURLToPath(import.meta.url) isn't available in CJS; walk up from cwd.
+  return path.resolve(process.cwd(), "node_modules", ".bin");
+}
+
 export class ShellTools {
+  private env: NodeJS.ProcessEnv;
+
   constructor(
     private workspace: string,
     private allowedCommands: string[],
-  ) {}
+  ) {
+    const bin = npmBinPath();
+    this.env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+  }
 
   async runCommand(command: string, args: string[] = []): Promise<string> {
     const base = path.basename(command);
@@ -33,6 +48,7 @@ export class ShellTools {
     try {
       const { stdout, stderr } = await execFileAsync(base, args, {
         cwd: this.workspace,
+        env: this.env,
         timeout: TIMEOUT_MS,
         maxBuffer: 4 * 1024 * 1024,
       });
