@@ -19,11 +19,12 @@ const CONV_KEY = "cli:repl";
  * (real-time events for the TUI). Delegates checkpoint operations to
  * the base logger — EventLogger only handles log().
  */
-function combineLoggers(base: { log(e: KatEvent): void; close(): void; saveCheckpoint: Function; getCheckpoint: Function; deleteCheckpoint: Function; getEvents: Function }, eventLogger: EventLogger) {
+function combineLoggers(base: { log(e: KatEvent): number | void; close(): void; saveCheckpoint: Function; getCheckpoint: Function; deleteCheckpoint: Function; getEvents: Function }, eventLogger: EventLogger) {
   return {
-    log(event: KatEvent) {
-      base.log(event);
+    log(event: KatEvent): number | void {
+      const seq = base.log(event);
       eventLogger.log(event);
+      return seq;
     },
     close() {
       base.close();
