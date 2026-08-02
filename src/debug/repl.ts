@@ -210,6 +210,11 @@ async function main(): Promise<void> {
   }
   process.stderr.write(`\n`);
 
+  // Start the tree — it pauses at .human() immediately.
+  // This establishes the continuation before the first prompt.
+  process.stderr.write(`\x1b[90m[starting tree…]\x1b[0m\n`);
+  await agent.run(CONV_KEY, "", onEmit);
+
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
@@ -227,7 +232,9 @@ async function main(): Promise<void> {
 
     if (input === "/clear") {
       agent.clear(CONV_KEY);
-      process.stderr.write("\x1b[33mconversation cleared\x1b[0m\n\n");
+      process.stderr.write("\x1b[33mconversation cleared\x1b[0m\n");
+      process.stderr.write("\x1b[90mrestarting tree…\x1b[0m\n");
+      await agent.run(CONV_KEY, "", onEmit);
       rl.prompt();
       return;
     }
