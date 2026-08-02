@@ -101,8 +101,10 @@ export class Agent {
       models: this.deps.models,
       tools: allTools,
       logger: this.deps.logger ?? this.logDb,
-      logLevel: this.deps.logLevel ?? "info",
       onEmit,
+      // Only set logLevel when using the default (string path) logger.
+      // When a custom logger is provided, it already handles console output.
+      ...(this.deps.logger ? {} : { logLevel: this.deps.logLevel ?? "info" }),
     };
 
     let outcome: { status?: string; continuation?: string };
