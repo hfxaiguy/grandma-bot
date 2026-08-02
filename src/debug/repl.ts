@@ -49,9 +49,9 @@ async function main(): Promise<void> {
   const tools = new ToolRegistry(config.workspaceDir, config.allowedCommands);
   const models = await loadModels();
 
-  // Grandma-kat handles SQLite persistence + Console output.
+  // Grandma-kat handles SQLite persistence. Console output via EventLogger below.
   const dbPath = path.join(config.workspaceDir, "logs/grandma-kat.db");
-  const baseLogger = createLogger(dbPath, debugLevel);
+  const baseLogger = createLogger(dbPath, 'none');
 
   // EventLogger adds real-time events for the TUI.
   const eventLogger = new EventLogger();
@@ -64,7 +64,7 @@ async function main(): Promise<void> {
     workspace: config.workspaceDir,
     tools,
     logger,
-    // Don't pass logLevel — the combined logger already includes ConsoleLogger.
+    logLevel: "none", // Prevent knit.mjs from creating a second ConsoleLogger.
   });
 
   // Subscribe to events and print formatted output.
