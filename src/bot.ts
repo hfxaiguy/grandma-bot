@@ -105,6 +105,12 @@ export function createBot(deps: BotDeps): Bot {
    */
   const handleUserContent = async (ctx: Context, content: string | unknown[]): Promise<void> => {
     const key = convKey(ctx);
+    // First message from this conversation: initialize the tree.
+    // It pauses at .human() immediately. Without this, the user's
+    // first message would be consumed by tree setup with no response.
+    if (!deps.agent.hasContinuation(key)) {
+      await deps.agent.run(key, "", async () => {});
+    }
     // keep the "typing…" indicator alive while the agent works
     const typing = setInterval(() => {
       ctx.api.sendChatAction(ctx.chat!.id, "typing", threadOpts(ctx)).catch(() => {});

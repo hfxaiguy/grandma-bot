@@ -332,13 +332,17 @@ the project's status.
 ### Agent & LLM
 
 **What does one agent turn actually look like?**
-`agent.run(key, message, onEmit)` resumes the tree from its saved checkpoint.
-The tree's `.memoryUpdate()` appends the user message to `messages`, the classify
-branch routes to direct or tools, the response branch generates an answer (possibly
-with tool calls in a loop), and `.emit()` sends the answer to Telegram via `onEmit`.
-The tree then loops back to `.human()` and pauses — checkpoint saved, continuation
-stored. On the first message of a new conversation, `knit()` starts fresh and pauses
-at `.human()` immediately (no LLM call until the user sends something).
+On the first message from a new conversation (or after `/clear`), the bot
+pre-initializes the tree: `agent.run(key, "", no-op)` creates the tree and
+pauses at `.human()` immediately. Then `agent.run(key, message, onEmit)`
+resumes from that checkpoint. The tree's `.memoryUpdate()` appends the user
+message to `messages`, the classify branch routes to direct/contacts/tools,
+the response branch generates an answer (possibly with tool calls in a loop),
+and `.emit()` sends the answer to Telegram via `onEmit`. The tree then loops
+back to `.human()` and pauses — checkpoint saved, continuation stored.
+
+The debug REPL (`npm run repl`) follows the same flow but runs in the terminal
+with real-time event streaming.
 
 **Why do tool errors not crash the turn?**
 `ToolRegistry.dispatch` wraps every tool in try/catch and returns errors as plain
