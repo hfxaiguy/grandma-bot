@@ -14,6 +14,9 @@ export interface KatEvent {
  * EventEmitter-based logger that implements grandma-kat's { log(event) }
  * interface. Subscribe with .on('event', listener) to receive structured
  * events in real-time.
+ *
+ * Used by the debug REPL. Checkpoint operations are handled by
+ * grandma-kat's SqliteLogger — EventLogger only handles log().
  */
 export class EventLogger extends EventEmitter {
   log(event: KatEvent): void {
@@ -22,15 +25,5 @@ export class EventLogger extends EventEmitter {
 
   close(): void {
     this.removeAllListeners();
-  }
-
-  // Checkpoint methods — SqliteLogger handles persistence.
-  saveCheckpoint(): void {}
-  getCheckpoint(): null {
-    return null;
-  }
-  deleteCheckpoint(): void {}
-  getEvents(): KatEvent[] {
-    return [];
   }
 }
