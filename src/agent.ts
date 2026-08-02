@@ -1,6 +1,8 @@
 import path from "node:path";
 // @ts-ignore — grandma-kat ships no .d.ts files.
 import grandma from "grandma-kat";
+// @ts-ignore — communications ships no .d.ts files.
+import { tools as commsTools } from "communications/src/tools.mjs";
 import type { ToolRegistry } from "./tools/index.js";
 import type { ModelRegistry } from "./models.js";
 import { loadPattern } from "./pattern-loader.js";
@@ -83,9 +85,13 @@ export class Agent {
     const katTools = this.deps.tools.toKatTools();
     const pattern = await loadPattern(this.deps.workspace);
 
+    // Merge built-in tools with comms tools.
+    const commsToolMap = Object.fromEntries(commsTools.map((t: { name: string }) => [t.name, t]));
+    const allTools = { ...katTools, ...commsToolMap };
+
     const runtime: Record<string, unknown> = {
       models: this.deps.models,
-      tools: katTools,
+      tools: allTools,
       logger: this.logDb,
       logLevel: "info",
       onEmit,
