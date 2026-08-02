@@ -131,7 +131,9 @@ export class Agent {
 
   /**
    * Clear the continuation for a conversation. The next `run()` will
-   * start a fresh tree. Used for `/clear` or error recovery.
+   * start a fresh tree (new system prompt, empty history). Per-topic:
+   * the key is "chatId:message_thread_id". The checkpoint in SQLite is
+   * orphaned but not deleted.
    */
   clear(key: string): void {
     this.continuations.delete(key);
