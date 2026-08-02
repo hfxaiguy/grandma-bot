@@ -138,6 +138,13 @@ export class Agent {
   }
 
   /**
+   * Check whether a continuation exists for a conversation key.
+   */
+  hasContinuation(key: string): boolean {
+    return this.continuations.has(key);
+  }
+
+  /**
    * Clear the continuation for a conversation. The next `run()` will
    * start a fresh tree (new system prompt, empty history). Per-topic:
    * the key is "chatId:message_thread_id". The checkpoint in SQLite is

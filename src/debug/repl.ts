@@ -239,7 +239,9 @@ async function main(): Promise<void> {
 
     lastOutput = "";
     try {
-      await agent.run(CONV_KEY, input, onEmit);
+      process.stderr.write(`\x1b[90m[debug] agent.run(key="${CONV_KEY}", continuation=${agent.hasContinuation(CONV_KEY) ? "yes" : "no"})\x1b[0m\n`);
+      const result = await agent.run(CONV_KEY, input, onEmit);
+      process.stderr.write(`\x1b[90m[debug] result: status=${result.status}, continuation=${result.continuation?.slice(0, 12)}…\x1b[0m\n`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       process.stderr.write(`\x1b[31merror: ${msg}\x1b[0m\n`);
