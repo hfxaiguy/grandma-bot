@@ -10,7 +10,7 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 // @ts-ignore — grandma-kat ships no .d.ts files.
-import { Tree, when, goback, max } from "grandma-kat";
+import { Tree, when, goback, goto, max } from "grandma-kat";
 
 const PATTERN_DIR = "patterns";
 const DEFAULT_PATTERN = "agent";
@@ -20,6 +20,7 @@ export interface PatternContext {
   Tree: typeof Tree;
   when: typeof when;
   goback: typeof goback;
+  goto: typeof goto;
   max: typeof max;
 }
 
@@ -48,7 +49,7 @@ export async function loadPattern(
     throw new Error(`pattern '${name}' must export a default function: ${filePath}`);
   }
 
-  const ctx: PatternContext = { Tree, when, goback, max };
+  const ctx: PatternContext = { Tree, when, goback, goto, max };
   const tree = mod.default(ctx);
 
   if (!tree || typeof tree !== "object") {
