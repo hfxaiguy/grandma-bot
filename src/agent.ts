@@ -18,6 +18,14 @@ export interface AgentDeps {
    */
   workspace: string;
   tools: ToolRegistry;
+  /**
+   * Custom logger for grandma-kat events. When set, used instead of
+   * the default SQLite logger. Useful for the debug REPL which injects
+   * a CompositeLogger(SqliteLogger, EventLogger).
+   */
+  logger?: unknown;
+  /** Log level for grandma-kat. Default: "info". */
+  logLevel?: "none" | "info" | "debug";
 }
 
 export interface AgentRunResult {
@@ -92,8 +100,8 @@ export class Agent {
     const runtime: Record<string, unknown> = {
       models: this.deps.models,
       tools: allTools,
-      logger: this.logDb,
-      logLevel: "info",
+      logger: this.deps.logger ?? this.logDb,
+      logLevel: this.deps.logLevel ?? "info",
       onEmit,
     };
 

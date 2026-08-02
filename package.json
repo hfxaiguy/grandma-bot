@@ -12,7 +12,8 @@
     "smoke": "tsx scripts/smoke.ts",
     "agent:mock": "tsx scripts/agent-mock-test.ts",
     "whisper:up": "sh -c 'set -a; . ./.env 2>/dev/null; set +a; exec vendor/whisper.cpp/build/bin/whisper-server --host 127.0.0.1 --port 8178 -m vendor/whisper.cpp/models/${WHISPER_MODEL:-ggml-base.bin}'",
-    "ollama:up": "sh -c 'curl -sf http://127.0.0.1:11434/api/tags >/dev/null 2>&1 && echo \"ollama already running at :11434\" || exec ollama serve'"
+    "ollama:up": "sh -c 'curl -sf http://127.0.0.1:11434/api/tags >/dev/null 2>&1 && echo \"ollama already running at :11434\" || exec ollama serve'",
+    "repl": "tsx src/debug/repl.ts"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
