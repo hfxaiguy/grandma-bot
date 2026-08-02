@@ -227,6 +227,47 @@ the project directory so its history is completely separate from the harness's o
 Every `write_file` / `edit_file` / `delete_file` is immediately committed.
 See the FAQ below for exactly how that works.
 
+## Workspace sync (desktop ↔ phone)
+
+The desktop can act as a git server for the workspace, letting you sync
+patterns, contacts, and files between your computer and phone over LAN.
+
+**Desktop setup** (one-time):
+
+```sh
+# Create bare repo (the "server")
+git init --bare ~/grandma-workspace.git
+
+# Add it as a remote in the live workspace
+git -C ~/grandma-workspace remote add sync ~/grandma-workspace.git
+git -C ~/grandma-workspace push sync master
+
+# Start the daemon (serves on port 9418, LAN only)
+cp systemd/git-daemon.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now git-daemon.service
+```
+
+Edit `GIT_DAEMON_IP` in the service file to match your LAN IP.
+
+**Phone setup** (handled by `install.sh` on deploy):
+
+```sh
+git -C ~/grandma-workspace remote add sync git://<desktop-ip>/grandma-workspace.git
+```
+
+**Syncing** — use the admin UI buttons at `http://<phone-ip>:8080`, or manually:
+
+```sh
+# Pull from desktop
+git -C ~/grandma-workspace pull sync master
+
+# Push to desktop
+git -C ~/grandma-workspace push sync master
+```
+
+The `logs/` directory (grandma-kat SQLite log) is gitignored and stays local.
+
 ## FAQ
 
 ### Git & workspace

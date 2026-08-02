@@ -58,7 +58,7 @@ adb_s am force-stop com.genymobile.gnirehtet 2>/dev/null || true
 sleep 2
 
 phone_has_internet() {
-  adb_s sh -c '
+  adb_x sh -c '
     ip route 2>/dev/null | grep -q "^default " && exit 0
     ping -c 1 -W 3 1.1.1.1 >/dev/null 2>&1 && exit 0
     exit 1
@@ -154,44 +154,31 @@ adb push /tmp/gbot-install.sh "$STAGE_DIR/install.sh" >/dev/null
 rm /tmp/gbot-install.sh
 
 # ---------- run install on the phone ----------
-note "sending install.sh to Termux"
-# Focus Termux and dismiss any keyboard
-adb shell am start -n com.termux/.app.TermuxActivity >/dev/null 2>&1
-sleep 1
-adb shell input keyevent 4   # BACK to dismiss keyboard
-sleep 1
-adb shell input tap 540 1180 # tap input area to focus
-sleep 1
-# Send the command
-adb shell input text 'sh%s/sdcard/Download/grandma-bob-deploy/install.sh'
-sleep 1
-adb shell input keyevent 66  # ENTER
+note "staged — run this on the phone:"
+echo
+echo "  sh /sdcard/Download/grandma-bob-deploy/install.sh"
+echo
 
 # ---------- summary ----------
 cat <<EOF
 
-$(printf '\033[1;32m')✓ deploying...$(printf '\033[0m')
+$(printf '\033[1;32m')✓ staged$(printf '\033[0m')
 
 phone : $DEVICE_MODEL
 stage : $STAGE_DIR
 admin : http://${DEVICE_IP:-<phone-ip>}:$ADMIN_PORT  (starts with the bot)
 
-The install.sh is now running on the phone. It will:
+$(printf '\033[1;33m')Next: open Termux on the phone and run:$(printf '\033[0m')
+
+  sh /sdcard/Download/grandma-bob-deploy/install.sh
+
+It will:
   - fix DNS (so git/npm work)
   - install packages (skipped if already installed)
   - git pull the latest code
   - npm install
   - extract sherpa-onnx + model
-  - set up pattern registry
+  - set up workspace sync (git remote to desktop)
   - start sherpa-onnx + bot (admin UI on port $ADMIN_PORT)
-
-When it's done, the bot will be live on Telegram as @hfxaiguy_bot.
-
-Watch logs:
-  adb shell tmux attach -t sherpa   # Ctrl-B then D to detach
-  adb shell tmux attach -t bot
-
-Admin UI:
-  http://$DEVICE_IP:$ADMIN_PORT
 
 EOF
