@@ -63,7 +63,7 @@ async function main(): Promise<void> {
     workspace: config.workspaceDir,
     tools,
     logger,
-    logLevel: debugLevel,
+    // Don't pass logLevel — the combined logger already includes ConsoleLogger.
   });
 
   // Subscribe to events and print formatted output.
