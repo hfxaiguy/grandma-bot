@@ -71,6 +71,11 @@ async function transcribeWithSherpa(wav: Buffer, sherpaUrl: string): Promise<str
   // (3) send the text message "Done" to signal end of audio
   // (4) the server replies with text messages: JSON results { text, is_final, is_eof }
   //     and finally the literal text "Done!" when all samples are processed
+  //
+  // On endpoint detection (pauses between sentences) the server marks the
+  // result is_final and RESETS its recognizer, so later partials only contain
+  // the new segment. Accumulate is_final segments; partials are per-segment
+  // previews and must not overwrite the accumulated transcript.
   const wsUrl = sherpaUrl.replace(/^http/, "ws");
   const samples = wavToFloat32Samples(wav);
 
@@ -81,7 +86,8 @@ async function transcribeWithSherpa(wav: Buffer, sherpaUrl: string): Promise<str
       reject(new Error(`sherpa-onnx timed out (no response within 30s): ${wsUrl}`));
     }, 30_000);
 
-    let text = "";
+    let finished = "";
+    let lastPartial = "";
 
     ws.onopen = () => {
       ws.send(samples);
@@ -93,14 +99,20 @@ async function transcribeWithSherpa(wav: Buffer, sherpaUrl: string): Promise<str
       if (ev.data === "Done!") {
         clearTimeout(timer);
         ws.close();
-        const trimmed = text.trim();
+        const trimmed = (finished || lastPartial).trim();
         if (!trimmed) reject(new Error("transcription came back empty (silent or unintelligible audio?)"));
         else resolve(trimmed);
         return;
       }
       try {
-        const json = JSON.parse(ev.data) as { text?: string };
-        if (typeof json.text === "string") text = json.text;
+        const json = JSON.parse(ev.data) as { text?: string; is_final?: boolean };
+        if (typeof json.text !== "string") return;
+        if (json.is_final) {
+          const segment = json.text.trim();
+          if (segment) finished += (finished ? " " : "") + segment;
+        } else {
+          lastPartial = json.text;
+        }
       } catch {
         // ignore non-JSON messages
       }
