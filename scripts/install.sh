@@ -164,7 +164,7 @@ BOT_SESSION="bot"
 note "starting sherpa-onnx"
 tmux kill-session -t "$SHERPA_SESSION" 2>/dev/null || true
 tmux new-session -d -s "$SHERPA_SESSION" \
-  "sh -c 'exec env TMPDIR=$SHERPA_TMP LD_PRELOAD=$GLIBC_DIR/lib/libc.so.6 $GLIBC_LOADER --library-path $GLIBC_DIR/lib:$SHERPA_DIR/lib $SHERPA_BIN --port=__STT_PORT__ --num-threads=4 --tokens=$MODEL_DIR/tokens.txt --encoder=$MODEL_DIR/encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx --decoder=$MODEL_DIR/decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx --joiner=$MODEL_DIR/joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx 2>&1 | tee $HOME_DIR/sherpa.log'"
+  "sh -c 'exec env TMPDIR=$SHERPA_TMP LD_PRELOAD=$GLIBC_DIR/lib/libc.so.6 $GLIBC_LOADER --library-path $GLIBC_DIR/lib:$SHERPA_DIR/lib $SHERPA_BIN --port=__STT_PORT__ --num-threads=4 --decoding-method=modified_beam_search --max-active-paths=8 --tokens=$MODEL_DIR/tokens.txt --encoder=$MODEL_DIR/encoder-epoch-99-avg-1-chunk-16-left-128.onnx --decoder=$MODEL_DIR/decoder-epoch-99-avg-1-chunk-16-left-128.onnx --joiner=$MODEL_DIR/joiner-epoch-99-avg-1-chunk-16-left-128.onnx 2>&1 | tee $HOME_DIR/sherpa.log'"
 sleep 2
 if curl -sSf -m 3 http://127.0.0.1:__STT_PORT__/ >/dev/null 2>&1; then
   note "sherpa-onnx listening on port __STT_PORT__"
