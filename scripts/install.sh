@@ -94,19 +94,25 @@ note "npm install"
 cd "$HOME_DIR/$PROJECT"
 npm install --no-audit --no-fund || warn "npm install failed"
 
-# ---------- grandma-kat tree-runtime ----------
-# npm install wipes node_modules; grandma-kat is not in package.json
-# so it gets removed. Re-clone it every time.
+# ---------- file: dependencies (grandma-kat, communications) ----------
+# Both are declared as local file: deps in package.json, so on the phone
+# npm install cannot resolve them (no sibling directory exists) and wipes
+# any prior clone. Re-clone them from GitHub every time.
 note "re-cloning grandma-kat tree-runtime"
 rm -rf node_modules/grandma-kat
 git clone "https://github.com/hfxaiguy/grandma-kat.git" node_modules/grandma-kat 2>/dev/null \
   || warn "grandma-kat clone failed"
 
+note "re-cloning communications"
+rm -rf node_modules/communications
+git clone "https://github.com/hfxaiguy/comms.git" node_modules/communications 2>/dev/null \
+  || warn "communications clone failed"
+
 # ---------- sherpa-onnx ----------
 SHERPA_DIR="$HOME_DIR/sherpa-onnx"
 GLIBC_DIR="$HOME_DIR/../usr/glibc"
 GLIBC_LOADER="$GLIBC_DIR/lib/ld-linux-aarch64.so.1"
-SHERPA_BIN="$SHERPA_DIR/bin/sherpa-onnx-offline-websocket-server"
+SHERPA_BIN="$SHERPA_DIR/bin/sherpa-onnx-online-websocket-server"
 SHERPA_TMP="$HOME_DIR/tmp"
 mkdir -p "$SHERPA_TMP"
 

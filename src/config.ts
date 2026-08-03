@@ -29,7 +29,7 @@ export const config = {
   ),
   workspaceDir: path.resolve(root, process.env.WORKSPACE_DIR ?? "workspace"),
   tmpDir: path.resolve(root, "tmp"),
-  /** STT backend: "whisper" (whisper.cpp server) or "sherpa" (sherpa-onnx HTTP server). */
+  /** STT backend: "whisper" (whisper.cpp server) or "sherpa" (sherpa-onnx websocket server). */
   sttBackend: ((process.env.STT_BACKEND ?? "whisper").toLowerCase() === "sherpa" ? "sherpa" : "whisper") as "whisper" | "sherpa",
   whisperUrl: (process.env.WHISPER_URL ?? "http://127.0.0.1:8178").replace(/\/$/, ""),
   sherpaUrl: (process.env.SHERPA_URL ?? "http://127.0.0.1:8178").replace(/\/$/, ""),

@@ -15,7 +15,7 @@ export interface SttOptions {
   backend: SttBackend;
   /** whisper.cpp server URL (used when backend === "whisper"). */
   whisperUrl: string;
-  /** sherpa-onnx HTTP server URL (used when backend === "sherpa"). */
+  /** sherpa-onnx websocket server URL (used when backend === "sherpa"). */
   sherpaUrl: string;
   tmpDir: string;
   /** Optional language override sent per-request ("en", "de", "auto", ...). */
@@ -39,9 +39,9 @@ export async function transcribeVoice({ fileUrl, backend, whisperUrl, sherpaUrl,
 
     const wav = await fs.readFile(wavPath);
 
-    return backend === "sherpa"
-      ? await transcribeWithSherpa(wav, sherpaUrl, language)
-      : await transcribeWithWhisper(wav, whisperUrl, language);
+return backend === "sherpa"
+        ? await transcribeWithSherpa(wav, sherpaUrl)
+        : await transcribeWithWhisper(wav, whisperUrl, language);
   } finally {
     await fs.rm(oggPath, { force: true });
     await fs.rm(wavPath, { force: true });
@@ -63,22 +63,79 @@ async function transcribeWithWhisper(wav: Buffer, whisperUrl: string, language?:
   return text;
 }
 
-async function transcribeWithSherpa(wav: Buffer, sherpaUrl: string, language?: string): Promise<string> {
-  // sherpa-onnx HTTP server /recognize: JSON body, "wave" = base64 of a full WAV file
-  // (server auto-parses the WAV header so sample_rate isn't required).
-  const body: Record<string, unknown> = { wave: wav.toString("base64") };
-  if (language) body.language = language;
+async function transcribeWithSherpa(wav: Buffer, sherpaUrl: string): Promise<string> {
+  // sherpa-onnx-online-websocket-server protocol (see online-websocket-server-impl.cc):
+  // (1) connect via WebSocket
+  // (2) send binary frames: raw float32 samples (LE), normalized to [-1, 1]
+  //     (no header — the sample rate is fixed by the server config)
+  // (3) send the text message "Done" to signal end of audio
+  // (4) the server replies with text messages: JSON results { text, is_final, is_eof }
+  //     and finally the literal text "Done!" when all samples are processed
+  const wsUrl = sherpaUrl.replace(/^http/, "ws");
+  const samples = wavToFloat32Samples(wav);
 
-  const sr = await fetch(`${sherpaUrl}/recognize`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+  return new Promise<string>((resolve, reject) => {
+    const ws = new WebSocket(wsUrl);
+    const timer = setTimeout(() => {
+      ws.close();
+      reject(new Error(`sherpa-onnx timed out (no response within 30s): ${wsUrl}`));
+    }, 30_000);
+
+    let text = "";
+
+    ws.onopen = () => {
+      ws.send(samples);
+      ws.send("Done");
+    };
+
+    ws.onmessage = (ev) => {
+      if (typeof ev.data !== "string") return;
+      if (ev.data === "Done!") {
+        clearTimeout(timer);
+        ws.close();
+        const trimmed = text.trim();
+        if (!trimmed) reject(new Error("transcription came back empty (silent or unintelligible audio?)"));
+        else resolve(trimmed);
+        return;
+      }
+      try {
+        const json = JSON.parse(ev.data) as { text?: string };
+        if (typeof json.text === "string") text = json.text;
+      } catch {
+        // ignore non-JSON messages
+      }
+    };
+
+    ws.onerror = () => {
+      clearTimeout(timer);
+      reject(new Error(`sherpa-onnx websocket error: ${wsUrl}`));
+    };
   });
-  if (!sr.ok) throw new Error(`sherpa-onnx failed: HTTP ${sr.status} — ${(await sr.text()).slice(0, 300)}`);
-  const json = (await sr.json()) as { text?: string; transcript?: string };
-  const text = (json.text ?? json.transcript ?? "").trim();
-  if (!text) throw new Error("transcription came back empty (silent or unintelligible audio?)");
-  return text;
+}
+
+/** Convert a 16-bit PCM WAV into a Float32Array of normalized samples in [-1, 1]. */
+function wavToFloat32Samples(wav: Buffer): Float32Array {
+  let offset = 12;
+  let dataOffset = -1;
+  let dataLength = 0;
+  while (offset + 8 <= wav.length) {
+    const id = wav.toString("ascii", offset, offset + 4);
+    const size = wav.readUInt32LE(offset + 4);
+    if (id === "data") {
+      dataOffset = offset + 8;
+      dataLength = size;
+      break;
+    }
+    offset += 8 + size;
+  }
+  if (dataOffset < 0) throw new Error("sherpa-onnx: WAV has no data chunk");
+
+  const sampleCount = Math.floor(dataLength / 2);
+  const samples = new Float32Array(sampleCount);
+  for (let i = 0; i < sampleCount; i++) {
+    samples[i] = wav.readInt16LE(dataOffset + i * 2) / 32768;
+  }
+  return samples;
 }
 
 /** Quick reachability probe for whichever backend is active. */
