@@ -133,6 +133,22 @@ async function gitSync(workspaceDir: string, direction: "push" | "pull") {
   }
 }
 
+// ── git commit ───────────────────────────────────────────────────────
+async function gitCommitAll(workspaceDir: string, message: string) {
+  try {
+    const status = await execFileAsync("git", ["-C", workspaceDir, "status", "--porcelain"], { timeout: 15000 });
+    if (!status.stdout.trim()) {
+      return { ok: true, committed: false, output: "nothing to commit (workspace clean)", hash: null };
+    }
+    await execFileAsync("git", ["-C", workspaceDir, "add", "-A"], { timeout: 15000 });
+    await execFileAsync("git", ["-C", workspaceDir, "commit", "-m", message], { timeout: 15000 });
+    const hash = (await execFileAsync("git", ["-C", workspaceDir, "rev-parse", "--short", "HEAD"], { timeout: 10000 })).stdout.trim();
+    return { ok: true, committed: true, output: status.stdout.trim(), hash };
+  } catch (e: any) {
+    return { ok: false, committed: false, output: (e.stdout && e.stdout + "\n") + (e.stderr || e.message) };
+  }
+}
+
 // ── pattern registry ──────────────────────────────────────────────────
 const PATTERNS_DIR_NAME = "patterns";
 
@@ -307,6 +323,7 @@ function buildHtml(config: AdminConfig): string {
   <p style="margin:4px 0"><small>Push/pull the workspace to/from the desktop's git-daemon (port 9418). The bot auto-commits file changes; use these to sync with the desktop.</small></p>
   <div id="sync-status" style="margin:8px 0; font:12px ui-monospace,monospace; color:var(--muted)">(not synced yet)</div>
   <div class="actions">
+    <button onclick="gitCommit()">Commit workspace</button>
     <button onclick="gitPull()">Pull from desktop</button>
     <button onclick="gitPush()">Push to desktop</button>
   </div>
@@ -441,6 +458,19 @@ async function saveEnv(e) {
 
 async function restartBot() {
   try { await api("/api/restart-bot", { method: "POST" }); toast("bot restarting..."); setTimeout(refreshStatus, 2000); } catch {}
+}
+
+async function gitCommit() {
+  const msg = (prompt("Commit message (blank = \"manual commit from admin UI\"):") || "").trim();
+  $("sync-status").textContent = "committing...";
+  try {
+    const r = await api("/api/commit", { method: "POST", body: JSON.stringify({ message: msg }) });
+    const line = r.committed
+      ? \`committed \${r.hash}\${r.output ? ":\n" + r.output : ""}\`
+      : (r.ok ? "nothing to commit (clean workspace)" : "error");
+    $("sync-status").textContent = line;
+    toast(r.ok ? (r.committed ? "committed " + r.hash : "workspace clean") : "commit failed", !r.ok);
+  } catch (e) { $("sync-status").textContent = "error: " + e.message; }
 }
 
 async function gitPull() {
@@ -675,6 +705,15 @@ export function startAdmin(cfg?: Partial<AdminConfig>): http.Server {
 
       if (req.method === "POST" && url.pathname === "/api/sync/push") {
         const result = await gitSync(config.workspaceDir, "push");
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(result));
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/commit") {
+        const body = await readBody(req);
+        const msg = (JSON.parse(body).message || "manual commit from admin UI").trim();
+        const result = await gitCommitAll(config.workspaceDir, msg);
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify(result));
         return;
