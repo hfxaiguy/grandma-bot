@@ -76,6 +76,9 @@ async function transcribeWithSherpa(wav: Buffer, sherpaUrl: string): Promise<str
   // result is_final and RESETS its recognizer, so later partials only contain
   // the new segment. Accumulate is_final segments; partials are per-segment
   // previews and must not overwrite the accumulated transcript.
+  //
+  // The streaming zipformer en model emits uppercase-only text and the
+  // websocket server has no truecaser, so we restore sentence case below.
   const wsUrl = sherpaUrl.replace(/^http/, "ws");
   const samples = wavToFloat32Samples(wav);
 
@@ -101,7 +104,7 @@ async function transcribeWithSherpa(wav: Buffer, sherpaUrl: string): Promise<str
         ws.close();
         const trimmed = (finished || lastPartial).trim();
         if (!trimmed) reject(new Error("transcription came back empty (silent or unintelligible audio?)"));
-        else resolve(trimmed);
+        else resolve(truecase(trimmed));
         return;
       }
       try {
@@ -123,6 +126,22 @@ async function transcribeWithSherpa(wav: Buffer, sherpaUrl: string): Promise<str
       reject(new Error(`sherpa-onnx websocket error: ${wsUrl}`));
     };
   });
+}
+
+/** Restore sentence case to all-caps text (the zipformer en model emits uppercase-only transcripts). */
+function truecase(text: string): string {
+  let out = "";
+  let capNext = true;
+  for (const ch of text.toLowerCase()) {
+    if (capNext && /[a-z]/.test(ch)) {
+      out += ch.toUpperCase();
+      capNext = false;
+    } else {
+      out += ch;
+      if (ch === "." || ch === "!" || ch === "?") capNext = true;
+    }
+  }
+  return out;
 }
 
 /** Convert a 16-bit PCM WAV into a Float32Array of normalized samples in [-1, 1]. */
