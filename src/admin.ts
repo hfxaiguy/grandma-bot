@@ -417,11 +417,18 @@ const $ = (id) => document.getElementById(id);
 let startedAt = Date.now();
 let currentDir = "";
 
-function toast(msg, isErr) {
+function toast(msg, isErr, ms) {
   const t = $("toast");
   t.textContent = msg;
   t.className = "toast show" + (isErr ? " err" : "");
-  setTimeout(() => t.className = "toast" + (isErr ? " err" : ""), 2000);
+  setTimeout(() => t.className = "toast" + (isErr ? " err" : ""), ms || (isErr ? 6000 : 3500));
+}
+
+function syncResult(r, done, failed) {
+  const ok = r.ok !== false;
+  $("sync-status").textContent = (ok ? "✓ " + done : "✗ " + failed) + (r.output ? "\n" + r.output : "");
+  $("sync-status").style.color = ok ? "var(--green)" : "var(--red)";
+  toast(ok ? done : failed, !ok, ok ? 3500 : 8000);
 }
 
 async function api(path, opts) {
@@ -482,23 +489,23 @@ async function gitCommit() {
 async function gitPull() {
   const local = $("sync-local").value.trim() || "master";
   const remote = $("sync-remote").value.trim() || local;
-  $("sync-status").textContent = "pulling...";
+  $("sync-status").textContent = "pulling " + remote + "...";
+  $("sync-status").style.color = "var(--muted)";
   try {
     const r = await api("/api/sync/pull", { method: "POST", body: JSON.stringify({ local, remote }) });
-    $("sync-status").textContent = r.output || "(no output)";
-    toast(r.ok ? "pulled" : "pull failed", !r.ok);
-  } catch (e) { $("sync-status").textContent = "error: " + e.message; }
+    syncResult(r, "pulled " + remote, "pull failed: " + remote);
+  } catch (e) { $("sync-status").textContent = "✗ " + e.message; $("sync-status").style.color = "var(--red)"; toast("pull failed", true, 8000); }
 }
 
 async function gitPush() {
   const local = $("sync-local").value.trim() || "master";
   const remote = $("sync-remote").value.trim() || local;
-  $("sync-status").textContent = "pushing...";
+  $("sync-status").textContent = "pushing " + local + " → " + remote + "...";
+  $("sync-status").style.color = "var(--muted)";
   try {
     const r = await api("/api/sync/push", { method: "POST", body: JSON.stringify({ local, remote }) });
-    $("sync-status").textContent = r.output || "(no output)";
-    toast(r.ok ? "pushed" : "push failed", !r.ok);
-  } catch (e) { $("sync-status").textContent = "error: " + e.message; }
+    syncResult(r, "pushed " + local + " → " + remote, "push failed: " + local + " → " + remote);
+  } catch (e) { $("sync-status").textContent = "error: " + e.message; $("sync-status").style.color = "var(--red)"; toast("push failed", true, 8000); }
 }
 
 async function loadLog(name) {
