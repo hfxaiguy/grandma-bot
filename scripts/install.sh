@@ -81,12 +81,10 @@ else
   note ".env already exists"
 fi
 if [ -f "$STAGE/models.json" ]; then
-  if [ ! -f "$HOME_DIR/$PROJECT/models.json" ]; then
-    note "writing models.json"
-    cp "$STAGE/models.json" "$HOME_DIR/$PROJECT/models.json"
-  else
-    note "models.json already exists"
-  fi
+  # Always refresh models.json from the staged copy so model changes
+  # (e.g. swapping to a model your subscription includes) propagate.
+  note "refreshing models.json"
+  cp "$STAGE/models.json" "$HOME_DIR/$PROJECT/models.json"
 fi
 
 # ---------- npm ----------
@@ -107,6 +105,10 @@ note "re-cloning communications"
 rm -rf node_modules/communications
 git clone "https://github.com/hfxaiguy/comms.git" node_modules/communications 2>/dev/null \
   || warn "communications clone failed"
+# communications is a pure-JS (node:sqlite) dependency now — no native builds.
+note "installing communications deps"
+(cd node_modules/communications && npm install --no-audit --no-fund) \
+  || warn "communications deps install failed"
 
 # ---------- sherpa-onnx ----------
 SHERPA_DIR="$HOME_DIR/sherpa-onnx"

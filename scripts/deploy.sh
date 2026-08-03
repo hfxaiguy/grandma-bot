@@ -102,8 +102,8 @@ rm /tmp/gbot-env
 # models.json
 cat > /tmp/gbot-models <<'MODELS'
 {
-  "cheap":  { "baseURL": "https://ollama.com", "apiKey": "${OLLAMA_API_KEY}", "model": "gemma4:31b",      "transform": "gemma4Thinking", "protocol": "ollama" },
-  "strong": { "baseURL": "https://ollama.com", "apiKey": "${OLLAMA_API_KEY}", "model": "deepseek-v4-flash", "transform": "gemma4Thinking", "protocol": "ollama" }
+  "cheap":  { "baseURL": "https://ollama.com", "apiKey": "${OLLAMA_API_KEY}", "model": "gemma4:31b",        "transform": "gemma4Thinking", "protocol": "ollama" },
+  "strong": { "baseURL": "https://ollama.com", "apiKey": "${OLLAMA_API_KEY}", "model": "gemma4:31b",        "transform": "gemma4Thinking", "protocol": "ollama" }
 }
 MODELS
 adb push /tmp/gbot-models "$STAGE_DIR/models.json" >/dev/null
