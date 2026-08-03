@@ -426,7 +426,7 @@ function toast(msg, isErr, ms) {
 
 function syncResult(r, done, failed) {
   const ok = r.ok !== false;
-  $("sync-status").textContent = (ok ? "✓ " + done : "✗ " + failed) + (r.output ? "\n" + r.output : "");
+  $("sync-status").textContent = (ok ? "✓ " + done : "✗ " + failed) + (r.output ? "\\n" + r.output : "");
   $("sync-status").style.color = ok ? "var(--green)" : "var(--red)";
   toast(ok ? done : failed, !ok, ok ? 3500 : 8000);
 }
@@ -474,12 +474,12 @@ async function restartBot() {
 }
 
 async function gitCommit() {
-  const msg = (prompt("Commit message (blank = \"manual commit from admin UI\"):") || "").trim();
+  const msg = (prompt('Commit message (blank = "manual commit from admin UI"):') || "").trim();
   $("sync-status").textContent = "committing...";
   try {
     const r = await api("/api/commit", { method: "POST", body: JSON.stringify({ message: msg }) });
     const line = r.committed
-      ? \`committed \${r.hash}\${r.output ? ":\n" + r.output : ""}\`
+      ? \`committed \${r.hash}\${r.output ? ":\\n" + r.output : ""}\`
       : (r.ok ? "nothing to commit (clean workspace)" : "error");
     $("sync-status").textContent = line;
     toast(r.ok ? (r.committed ? "committed " + r.hash : "workspace clean") : "commit failed", !r.ok);
