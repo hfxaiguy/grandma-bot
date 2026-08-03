@@ -1,30 +1,16 @@
 {
-  "$comment": "Native Ollama (direct to ollama.com, no local server):",
-  "cheap-native": {
-    "baseURL": "https://ollama.com",
-    "apiKey": "${OLLAMA_API_KEY}",
-    "model": "gemma4:e2b",
-    "transform": "gemma4Thinking",
-    "protocol": "ollama"
-  },
-  "strong-native": {
-    "baseURL": "https://ollama.com",
-    "apiKey": "${OLLAMA_API_KEY}",
-    "model": "gemma4:31b-cloud",
-    "transform": "gemma4Thinking",
-    "protocol": "ollama"
-  },
-  "$comment2": "Local Ollama server (requires `ollama serve` + `ollama signin`):",
   "cheap": {
-    "baseURL": "http://127.0.0.1:11434/v1",
-    "apiKey": "ollama",
-    "model": "gemma4:e2b",
-    "transform": "gemma4Thinking"
+    "baseURL": "https://ollama.com",
+    "apiKey": "${OLLAMA_API_KEY}",
+    "model": "gemma4:31b",
+    "transform": "gemma4Thinking",
+    "protocol": "ollama"
   },
   "strong": {
-    "baseURL": "http://127.0.0.1:11434/v1",
-    "apiKey": "ollama",
-    "model": "gemma4:31b-cloud",
-    "transform": "gemma4Thinking"
+    "baseURL": "https://ollama.com",
+    "apiKey": "${OLLAMA_API_KEY}",
+    "model": "gemma4:31b",
+    "transform": "gemma4Thinking",
+    "protocol": "ollama"
   }
 }

@@ -99,15 +99,11 @@ ENV
 adb push /tmp/gbot-env "$STAGE_DIR/.env.template" >/dev/null
 rm /tmp/gbot-env
 
-# models.json
-cat > /tmp/gbot-models <<'MODELS'
-{
-  "cheap":  { "baseURL": "https://ollama.com", "apiKey": "${OLLAMA_API_KEY}", "model": "gemma4:31b",        "transform": "gemma4Thinking", "protocol": "ollama" },
-  "strong": { "baseURL": "https://ollama.com", "apiKey": "${OLLAMA_API_KEY}", "model": "gemma4:31b",        "transform": "gemma4Thinking", "protocol": "ollama" }
-}
-MODELS
-adb push /tmp/gbot-models "$STAGE_DIR/models.json" >/dev/null
-rm /tmp/gbot-models
+# models.json — single source of truth is the committed models.example.json.
+# Copy it verbatim; the bot interpolates ${ENV_VAR} secrets at runtime.
+note "staging models.json from models.example.json"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+adb push "$SCRIPT_DIR/../models.example.json" "$STAGE_DIR/models.json" >/dev/null
 
 # sherpa-onnx tarball
 SHERPA_TARBALL="sherpa-onnx-$SHERPA_ASSET_GLOB.tar.bz2"
