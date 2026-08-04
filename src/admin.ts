@@ -16,7 +16,7 @@
 
 import http from "node:http";
 import { readFile, writeFile, readdir, stat, mkdir, unlink } from "node:fs/promises";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
 import fs from "node:fs";
@@ -112,12 +112,31 @@ async function tmuxStatus(botSession: string, sherpaSession: string) {
   };
 }
 
-async function restartBot(projectDir: string, botSession: string) {
-  await tmux(["kill-session", "-t", botSession]);
-  await tmux([
-    "new-session", "-d", "-s", botSession,
-    `sh -c 'cd "${projectDir}" && exec npm run dev 2>&1 | tee ~/bot.log'`,
-  ]);
+/**
+ * Restart the bot tmux session.
+ *
+ * The admin server runs INSIDE the bot's tmux session, so killing that
+ * session from this process would SIGHUP ourselves before the new session
+ * is created — the bot would die and never come back. Instead the whole
+ * restart runs in a detached child (own process group, unref'd), which
+ * survives the kill.
+ *
+ * Sequence: drop any leftover temp session, create the new session under a
+ * temp name, give the HTTP response time to flush, THEN kill the old
+ * session, then rename the new one into place.
+ */
+function restartBot(projectDir: string, botSession: string) {
+  const newName = `${botSession}-new`;
+  const sessionCmd = `sh -c "cd ${projectDir} && exec npm run dev 2>&1 | tee ~/bot.log"`;
+  const script = [
+    `tmux kill-session -t ${newName} 2>/dev/null;`,
+    `tmux new-session -d -s ${newName} '${sessionCmd}';`,
+    `sleep 1;`,
+    `tmux kill-session -t ${botSession} 2>/dev/null;`,
+    `tmux rename-session -t ${newName} ${botSession}`,
+  ].join(" ");
+  const child = spawn("sh", ["-c", script], { detached: true, stdio: "ignore" });
+  child.unref();
 }
 
 // ── git sync ────────────────────────────────────────────────────────
@@ -707,7 +726,7 @@ export function startAdmin(cfg?: Partial<AdminConfig>): http.Server {
       }
 
       if (req.method === "POST" && url.pathname === "/api/restart-bot") {
-        await restartBot(config.projectDir, config.botSession);
+        restartBot(config.projectDir, config.botSession);
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({ ok: true }));
         return;
