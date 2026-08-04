@@ -110,11 +110,15 @@ export class Agent {
     let outcome: { status?: string; continuation?: string };
 
     if (cont) {
-      // Resume from checkpoint.
+      // Resume from checkpoint. The reply is passed raw — grandma-kat's
+      // resume() routes it into whatever .human() slot the checkpoint says
+      // is paused (e.g. the knowledge branch's verify_search), so the
+      // caller never names the slot. See injectHumanInput in
+      // grandma-knits/src/knit.mjs.
       outcome = await grandma.knit(pattern, {
         ...runtime,
         _continuation: cont,
-        humanInput: { main_input: humanInput },
+        humanInput,
       });
     } else {
       // First run: inject system prompt and start the tree.
