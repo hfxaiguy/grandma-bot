@@ -322,6 +322,8 @@ function buildHtml(config: AdminConfig): string {
   label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 4px; }
   input[type=text], input[type=password], textarea, select { width: 100%; padding: 10px 12px; background: #0b1224; color: var(--fg); border: 1px solid #334155; border-radius: 6px; font: 14px ui-monospace, monospace; }
   input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+  input.env-key { background: transparent; border: none; color: var(--muted); font: 12px ui-monospace, monospace; width: auto; min-width: 80px; padding: 0; }
+  input.env-key:focus { outline: none; border-bottom: 1px solid var(--accent); color: var(--fg); }
   button { background: var(--accent); color: white; border: none; padding: 10px 18px; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; }
   button.secondary { background: #475569; }
   button.danger { background: var(--red); }
@@ -504,27 +506,32 @@ function renderEnvKeys() {
   box.innerHTML = "";
   const rows = envRows.filter((r) => !r.removed);
   if (!rows.length) { box.textContent = "(no keys — add one below)"; return; }
-  rows.forEach((r, i) => {
-    const row = document.createElement("div");
-    row.style.cssText = "display:flex;gap:6px;align-items:center;margin-bottom:6px";
+  rows.forEach((r) => {
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "margin-bottom:10px";
+    const lab = document.createElement("label");
+    lab.style.cssText = "margin-top:0";
     const k = document.createElement("input");
     k.className = "env-key";
-    k.style.width = "36%";
     k.value = r.key;
-    k.placeholder = "KEY";
+    k.placeholder = "KEY NAME";
     k.spellcheck = false;
-    const v = document.createElement("input");
-    v.className = "env-val";
-    v.style.flex = "1";
-    v.value = r.value;
-    v.placeholder = "value";
+    k.oninput = () => { r.key = k.value; };
     const del = document.createElement("button");
     del.className = "secondary";
     del.textContent = "×";
     del.title = "Remove this key";
+    del.style.cssText = "float:right;padding:2px 10px";
     del.onclick = () => { r.removed = true; renderEnvKeys(); };
-    row.append(k, v, del);
-    box.appendChild(row);
+    const v = document.createElement("input");
+    v.className = "env-val";
+    v.type = "text";
+    v.value = r.value;
+    v.placeholder = "value";
+    v.oninput = () => { r.value = v.value; };
+    lab.append(k, del);
+    wrap.append(lab, v);
+    box.appendChild(wrap);
   });
 }
 
