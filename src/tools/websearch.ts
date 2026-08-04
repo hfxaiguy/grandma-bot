@@ -1,7 +1,6 @@
 const EXA_SEARCH_URL = "https://api.exa.ai/search";
 const TIMEOUT_MS = 30_000;
 const MAX_TEXT_CHARS = 8_000;
-const MAX_OUTPUT = 50_000;
 
 const CATEGORIES = new Set([
   "company", "people", "publication", "news", "personal site", "financial report",
@@ -31,10 +30,23 @@ interface ExaResponse {
   results?: ExaResult[];
 }
 
+export interface ExaSearchOutput {
+  query: string;
+  count: number;
+  results: ExaResult[];
+  [key: string]: string | number | ExaResult[];
+}
+
 export class ExaSearchTools {
   constructor(private apiKey: string) {}
 
-  async search(args: ExaSearchArgs): Promise<string> {
+  /**
+   * Structured search result: a plain JSON object. Errors (bad key,
+   * API failure, etc.) are returned as "error:" strings instead — never
+   * thrown — so the agent can recover. No truncation is applied: the full
+   * object is returned as-is.
+   */
+  async search(args: ExaSearchArgs): Promise<string | ExaSearchOutput> {
     if (!this.apiKey) {
       return "error: web search not configured (set EXO_API_KEY in .env)";
     }
@@ -108,14 +120,6 @@ export class ExaSearchTools {
       text: r.text ?? null,
     }));
 
-    return this.format({ query, count: results.length, results });
-  }
-
-  private format(payload: unknown): string {
-    const out = JSON.stringify(payload, null, 2);
-    if (out.length > MAX_OUTPUT) {
-      return out.slice(0, MAX_OUTPUT) + "\n… (truncated)";
-    }
-    return out;
+    return { query, count: results.length, results };
   }
 }

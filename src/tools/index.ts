@@ -111,7 +111,7 @@ export class ToolRegistry {
       function: {
         name: "exa_search",
         description:
-          "Search the web via the Exa Search API. Returns a JSON object (pretty-printed) with " +
+          "Search the web via the Exa Search API. Returns structured data: a JSON object with " +
           "'query', 'count', and 'results', where each result has title, url, publishedDate, " +
           "highlights (query-relevant excerpts) and text (page content up to 8000 chars). " +
           "Use for current events, facts, research, or anything requiring up-to-date web information.",
@@ -144,8 +144,10 @@ export class ToolRegistry {
     },
   ];
 
-  /** Execute a tool call; always returns a string (errors included) so the agent can recover. */
-  async dispatch(name: string, argsJson: string): Promise<string> {
+  /** Execute a tool call; returns a string (errors included) or a plain
+   *  JSON object (structured output) so the agent can recover and patterns
+   *  can read structured data directly. */
+  async dispatch(name: string, argsJson: string): Promise<string | Json> {
     let args: Json;
     try {
       args = JSON.parse(argsJson || "{}") as Json;
@@ -201,16 +203,17 @@ export class ToolRegistry {
   /**
    * Build a grandma-kat tool registry from the OpenAI schemas above.
    * `execute(args)` calls `dispatch(name, JSON.stringify(args))` so error
-   * handling is identical to the OpenAI tool-call path. Errors that start with
-   * "error" are detected by the runner and surface in m.raw.prev[0].toolResults
-   * with isError=true.
+   * handling is identical to the OpenAI tool-call path. Results may be a
+   * string or a plain JSON object; "error"-shaped results (strings starting
+   * with "error" or objects with an "error" key) are detected by the runner
+   * and surface in m.raw.prev[0].toolResults with isError=true.
    */
   toKatTools(): Record<
     string,
     {
       description: string;
       parameters: { type: "object"; properties?: Record<string, unknown>; required?: string[] };
-      execute: (args: Json) => Promise<string>;
+      execute: (args: Json) => Promise<string | Json>;
     }
   > {
     const out: Record<
@@ -218,7 +221,7 @@ export class ToolRegistry {
       {
         description: string;
         parameters: { type: "object"; properties?: Record<string, unknown>; required?: string[] };
-        execute: (args: Json) => Promise<string>;
+        execute: (args: Json) => Promise<string | Json>;
       }
     > = {};
     for (const d of this.definitions) {
