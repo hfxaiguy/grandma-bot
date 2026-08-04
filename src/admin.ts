@@ -371,7 +371,7 @@ function buildHtml(config: AdminConfig): string {
 </div>
 
 <div class="card">
-  <h2 style="margin-top:0">Credentials</h2>
+  <h2 style="margin-top:0">Credentials &amp; .env</h2>
   <form id="envForm" onsubmit="saveEnv(event)">
     <div class="grid-2">
       <div>
@@ -387,16 +387,14 @@ function buildHtml(config: AdminConfig): string {
     <input id="f-hf" type="password" placeholder="hf_...">
     <label>Ollama API key <span id="cur-ollama" style="float:right"></span></label>
     <input id="f-ollama" type="password" placeholder="ollama-api-key...">
-    <small>Shortcuts for the most common keys — every other key is editable in <strong>All .env keys</strong> below.</small>
+    <small>Shortcuts for the most common keys — every other key in <code>.env</code> is editable below.</small>
     <div class="actions">
       <button type="submit">Save credentials</button>
     </div>
   </form>
-</div>
-
-<div class="card">
-  <h2 style="margin-top:0">All .env keys</h2>
-  <p style="margin:4px 0"><small>Every key in <code>.env</code> (values visible). Edit values, rename a key, add or remove keys. Changes apply after a bot restart.</small></p>
+  <div style="margin:16px 0; border-top:1px solid var(--border,#334155)"></div>
+  <h3 style="margin:0 0 8px; font-size:14px">All .env keys</h3>
+  <p style="margin:0 0 8px"><small>Values visible. Edit a value, rename a key, add or remove keys. Changes apply after a bot restart.</small></p>
   <div id="env-keys">(loading...)</div>
   <div class="actions">
     <button class="secondary" onclick="addEnvKey()">+ Add key</button>
