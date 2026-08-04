@@ -2,7 +2,7 @@
 //
 // Web admin UI for grandma-bob. Starts an HTTP server on ADMIN_PORT
 // (default 8080) that serves a single-page app for:
-//   - setting up .env credentials (bot token, user ID, HF API key)
+//   - editing .env credentials and all .env keys (via the browser)
 //   - viewing bot/sherpa tmux status
 //   - tailing bot.log / sherpa.log
 //   - restarting the bot tmux session
@@ -87,18 +87,34 @@ async function readEnv(envPath: string): Promise<Record<string, string> | null> 
   }
 }
 
-async function writeEnv(envPath: string, updates: Record<string, string>) {
-  let current: Record<string, string> = {};
+/**
+ * Merge `updates` into the .env file, preserving comments and line order.
+ * A value of `null` removes the key entirely. New keys are appended at the
+ * end. The parsed form is a flat `KEY=value` file — values are stored
+ * verbatim, secrets are not logged.
+ */
+async function writeEnv(envPath: string, updates: Record<string, string | null>) {
+  let lines: string[] = [];
   try {
-    const data = await readFile(envPath, "utf8");
-    for (const line of data.split("\n")) {
-      const m = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
-      if (m) current[m[1]] = m[2];
-    }
+    lines = (await readFile(envPath, "utf8")).split("\n");
   } catch { /* no existing file */ }
-  const merged = { ...current, ...updates };
-  const body = Object.entries(merged).map(([k, v]) => `${k}=${v}`).join("\n") + "\n";
-  await writeFile(envPath, body, { mode: 0o600 });
+  const pending = new Map(Object.entries(updates));
+  const out: string[] = [];
+  for (const line of lines) {
+    const m = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
+    if (m && pending.has(m[1])) {
+      const v = pending.get(m[1])!;
+      pending.delete(m[1]);
+      if (v === null) continue; // key removed
+      out.push(`${m[1]}=${v}`);
+    } else {
+      out.push(line);
+    }
+  }
+  for (const [k, v] of pending) {
+    if (v !== null) out.push(`${k}=${v}`); // new keys
+  }
+  await writeFile(envPath, out.join("\n").replace(/\n+$/, "") + "\n", { mode: 0o600 });
 }
 
 // ── tmux status ───────────────────────────────────────────────────────
@@ -371,11 +387,21 @@ function buildHtml(config: AdminConfig): string {
     <input id="f-hf" type="password" placeholder="hf_...">
     <label>Ollama API key <span id="cur-ollama" style="float:right"></span></label>
     <input id="f-ollama" type="password" placeholder="ollama-api-key...">
-    <small>Other settings (LLM model, STT, workspace) live in <code>.env</code> and can be edited by hand on the phone.</small>
+    <small>Shortcuts for the most common keys — every other key is editable in <strong>All .env keys</strong> below.</small>
     <div class="actions">
       <button type="submit">Save credentials</button>
     </div>
   </form>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">All .env keys</h2>
+  <p style="margin:4px 0"><small>Every key in <code>.env</code> (values visible). Edit values, rename a key, add or remove keys. Changes apply after a bot restart.</small></p>
+  <div id="env-keys">(loading...)</div>
+  <div class="actions">
+    <button class="secondary" onclick="addEnvKey()">+ Add key</button>
+    <button onclick="saveAllEnv()">Save all keys</button>
+  </div>
 </div>
 
 <div class="card">
@@ -434,6 +460,7 @@ function buildHtml(config: AdminConfig): string {
 <script>
 const $ = (id) => document.getElementById(id);
 let startedAt = Date.now();
+let envRows = []; // { key, orig, value, removed } — orig = key as loaded from .env
 let currentDir = "";
 
 function toast(msg, isErr, ms) {
@@ -466,6 +493,73 @@ async function refreshStatus() {
   $("cur-uid").textContent    = env.ALLOWED_USER_IDS    ? "current: " + env.ALLOWED_USER_IDS : "(unset)";
   $("cur-hf").textContent     = env.LLM_API_KEY         ? "current: " + env.LLM_API_KEY.slice(0,6) + "..." : "(unset)";
   $("cur-ollama").textContent = env.OLLAMA_API_KEY      ? "current: " + env.OLLAMA_API_KEY.slice(0,6) + "..." : "(unset)";
+  // Populate the all-keys editor only when it's not holding unsaved edits.
+  if (!envRows.length) {
+    envRows = Object.entries(env).map(([key, value]) => ({ key, orig: key, value: String(value), removed: false }));
+    renderEnvKeys();
+  }
+}
+
+function renderEnvKeys() {
+  const box = $("env-keys");
+  if (!box) return;
+  box.innerHTML = "";
+  const rows = envRows.filter((r) => !r.removed);
+  if (!rows.length) { box.textContent = "(no keys — add one below)"; return; }
+  rows.forEach((r, i) => {
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;gap:6px;align-items:center;margin-bottom:6px";
+    const k = document.createElement("input");
+    k.className = "env-key";
+    k.style.width = "36%";
+    k.value = r.key;
+    k.placeholder = "KEY";
+    k.spellcheck = false;
+    const v = document.createElement("input");
+    v.className = "env-val";
+    v.style.flex = "1";
+    v.value = r.value;
+    v.placeholder = "value";
+    const del = document.createElement("button");
+    del.className = "secondary";
+    del.textContent = "×";
+    del.title = "Remove this key";
+    del.onclick = () => { r.removed = true; renderEnvKeys(); };
+    row.append(k, v, del);
+    box.appendChild(row);
+  });
+}
+
+function addEnvKey() {
+  envRows.push({ key: "", orig: "", value: "", removed: false });
+  renderEnvKeys();
+}
+
+function collectEnvUpdates() {
+  const updates = {};
+  for (const r of envRows) {
+    if (r.removed) {
+      if (r.key) updates[r.key] = null;
+      continue;
+    }
+    const key = r.key.trim();
+    if (!key) continue;
+    if (r.orig && r.orig !== key && !(r.orig in updates)) updates[r.orig] = null;
+    updates[key] = r.value;
+  }
+  return updates;
+}
+
+async function saveAllEnv() {
+  const updates = collectEnvUpdates();
+  if (!Object.keys(updates).length) { toast("nothing to change", true); return; }
+  try {
+    await api("/api/env", { method: "POST", body: JSON.stringify(updates) });
+    toast("saved — restart the bot to apply");
+    envRows = [];
+    renderEnvKeys();
+    await refreshStatus();
+  } catch {}
 }
 
 async function refreshAll() {
