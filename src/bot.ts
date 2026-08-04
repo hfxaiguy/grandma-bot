@@ -39,12 +39,31 @@ function chunk(text: string, size = MAX_TG_MESSAGE): string[] {
 
 export function createBot(deps: BotDeps): Bot {
   const bot = new Bot(deps.token);
-  // Keep the Telegram command menu in sync with the handlers below, so
-  // stale commands (set e.g. via BotFather earlier) disappear from the UI.
-  void bot.api.setMyCommands([
-    { command: "clear", description: "Clear conversation context for this topic" },
-    { command: "status", description: "Show workspace, git, model and STT status" },
-  ]).catch((err) => console.error("[commands]", err));
+  // Keep the Telegram command menu in sync with the handlers below.
+  // setMyCommands without a scope only touches the default scope, so stale
+  // commands set earlier (BotFather, old versions) survive in the other
+  // scopes and keep showing in the "/" menu. Wipe every scope first, then
+  // install the real command list on the default scope.
+  void (async () => {
+    const scopes: Array<{ type: "default" | "all_private_chats" | "all_group_chats" | "all_chat_administrators" }> = [
+      { type: "default" },
+      { type: "all_private_chats" },
+      { type: "all_group_chats" },
+      { type: "all_chat_administrators" },
+    ];
+    for (const scope of scopes) {
+      await bot.api.setMyCommands([], { scope }).catch((err) => console.error("[commands]", err));
+    }
+    await bot.api
+      .setMyCommands(
+        [
+          { command: "clear", description: "Clear conversation context for this topic" },
+          { command: "status", description: "Show workspace, git, model and STT status" },
+        ],
+        { scope: { type: "default" } },
+      )
+      .catch((err) => console.error("[commands]", err));
+  })();
   // Serialize work per conversation so parallel voice notes don't interleave agent runs.
   const queues = new Map<string, Promise<void>>();
 
