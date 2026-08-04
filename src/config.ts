@@ -38,6 +38,8 @@ export const config = {
   sherpaUrl: (process.env.SHERPA_URL ?? "http://127.0.0.1:8178").replace(/\/$/, ""),
   /** Spoken language for STT (e.g. "en", "de", "auto"). Empty = server default ("en"). */
   sttLanguage: process.env.STT_LANGUAGE ?? process.env.WHISPER_LANGUAGE ?? "",
+  /** Exa Search API key for the exa_search web search tool (optional — tool errors if unset). */
+  exaApiKey: process.env.EXO_API_KEY ?? "",
   allowedCommands: (process.env.ALLOWED_COMMANDS ?? DEFAULT_COMMANDS.join(","))
     .split(",")
     .map((s) => s.trim())

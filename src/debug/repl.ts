@@ -46,7 +46,7 @@ async function main(): Promise<void> {
   await fs.mkdir(path.join(config.workspaceDir, "logs"), { recursive: true });
   await ensureWorkspaceGitignore(config.workspaceDir, ["logs/grandma-kat.db*"]);
 
-  const tools = new ToolRegistry(config.workspaceDir, config.allowedCommands);
+  const tools = new ToolRegistry(config.workspaceDir, config.allowedCommands, config.exaApiKey);
   const models = await loadModels();
 
   // Grandma-kat handles SQLite persistence. Console output via EventLogger below.
