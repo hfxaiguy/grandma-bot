@@ -10,7 +10,7 @@ STT_PORT="${STT_PORT:-8178}"
 ADMIN_PORT="${ADMIN_PORT:-8080}"
 PHONE_TERMUX_HOME="/data/data/com.termux/files/home"
 PHONE_PROJECT_DIR="grandma-bob"
-MODEL_DIR_NAME="sherpa-onnx-streaming-zipformer-en-kroko-2025-08-06"
+MODEL_DIR_NAME="sherpa-onnx-nemo-parakeet_tdt_transducer_110m-en-36000-int8"
 STAGE_DIR="/sdcard/Download/grandpa-bob-deploy"
 GRANDMA_KAT_URL="${GRANDMA_KAT_URL:-https://github.com/hfxaiguy/grandma-kat.git}"
 DESKTOP_IP="${DESKTOP_IP:-192.168.2.10}"
@@ -90,7 +90,7 @@ cat > /tmp/gbot-env <<'ENV'
 TELEGRAM_BOT_TOKEN=replace-me
 ALLOWED_USER_IDS=replace-me
 OLLAMA_API_KEY=replace-me
-STT_BACKEND=sherpa
+STT_BACKEND=parakeet
 SHERPA_URL=ws://127.0.0.1:8178
 STT_LANGUAGE=en
 WORKSPACE_DIR=/data/data/com.termux/files/home/grandma-workspace

@@ -6,7 +6,7 @@ import path from "node:path";
 
 const execFileAsync = promisify(execFile);
 
-export type SttBackend = "whisper" | "sherpa";
+export type SttBackend = "whisper" | "sherpa" | "parakeet";
 
 export interface SttOptions {
   /** Direct https://api.telegram.org/file/bot<token>/<file_path> URL */
@@ -15,7 +15,7 @@ export interface SttOptions {
   backend: SttBackend;
   /** whisper.cpp server URL (used when backend === "whisper"). */
   whisperUrl: string;
-  /** sherpa-onnx websocket server URL (used when backend === "sherpa"). */
+  /** sherpa-onnx websocket server URL (used when backend === "sherpa" or "parakeet"). */
   sherpaUrl: string;
   tmpDir: string;
   /** Optional language override sent per-request ("en", "de", "auto", ...). */
@@ -41,7 +41,9 @@ export async function transcribeVoice({ fileUrl, backend, whisperUrl, sherpaUrl,
 
 return backend === "sherpa"
         ? await transcribeWithSherpa(wav, sherpaUrl)
-        : await transcribeWithWhisper(wav, whisperUrl, language);
+        : backend === "parakeet"
+          ? await transcribeWithParakeet(wav, sherpaUrl)
+          : await transcribeWithWhisper(wav, whisperUrl, language);
   } finally {
     await fs.rm(oggPath, { force: true });
     await fs.rm(wavPath, { force: true });
@@ -124,6 +126,64 @@ async function transcribeWithSherpa(wav: Buffer, sherpaUrl: string): Promise<str
     ws.onerror = () => {
       clearTimeout(timer);
       reject(new Error(`sherpa-onnx websocket error: ${wsUrl}`));
+    };
+  });
+}
+
+async function transcribeWithParakeet(wav: Buffer, sherpaUrl: string): Promise<string> {
+  // sherpa-onnx-offline-websocket-server protocol (offline-websocket-server-impl.cc):
+  // (1) connect via WebSocket
+  // (2) first binary frame carries a header of two int32 LE values
+  //     [sample_rate][expected_byte_size], followed by the raw float32
+  //     samples (LE), normalized to [-1, 1]
+  // (3) the server decodes once the whole buffer has arrived and replies
+  //     with one JSON message containing { "text": ... }
+  // (4) the client sends "Done" so the server closes the connection
+  const wsUrl = sherpaUrl.replace(/^http/, "ws");
+  const samples = wavToFloat32Samples(wav);
+
+  return new Promise<string>((resolve, reject) => {
+    const ws = new WebSocket(wsUrl);
+    // Offline decoding of a long note can take a while on a phone, so scale
+    // the timeout with the audio length instead of a fixed cap.
+    const durationMs = Math.round((samples.length / 16000) * 1000);
+    const timer = setTimeout(() => {
+      ws.close();
+      reject(new Error(`parakeet (offline) timed out after ${Math.round((durationMs * 3) / 1000)}s: ${wsUrl}`));
+    }, Math.max(60_000, durationMs * 3));
+
+    let text = "";
+
+    ws.onopen = () => {
+      const frame = new Uint8Array(8 + samples.byteLength);
+      const view = new DataView(frame.buffer);
+      view.setInt32(0, 16000, true);
+      view.setInt32(4, samples.byteLength, true);
+      frame.set(new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength), 8);
+      ws.send(frame);
+    };
+
+    ws.onmessage = (ev) => {
+      if (typeof ev.data !== "string") return;
+      try {
+        const json = JSON.parse(ev.data) as { text?: string };
+        if (typeof json.text === "string") text += json.text;
+      } catch {
+        // ignore non-JSON messages
+      }
+      ws.send("Done");
+    };
+
+    ws.onclose = () => {
+      clearTimeout(timer);
+      const trimmed = text.trim();
+      if (!trimmed) reject(new Error("transcription came back empty (silent or unintelligible audio?)"));
+      else resolve(trimmed);
+    };
+
+    ws.onerror = () => {
+      clearTimeout(timer);
+      reject(new Error(`parakeet (offline) websocket error: ${wsUrl}`));
     };
   });
 }

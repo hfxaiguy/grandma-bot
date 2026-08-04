@@ -79,6 +79,14 @@ if [ ! -f "$HOME_DIR/$PROJECT/.env" ]; then
   chmod 600 "$HOME_DIR/$PROJECT/.env"
 else
   note ".env already exists"
+  # Keep STT_BACKEND in sync with the staged template (e.g. when the
+  # deployed STT backend changes) without clobbering the user's secrets.
+  TEMPLATE_BACKEND=$(grep -E '^STT_BACKEND=' "$STAGE/.env.template" | cut -d= -f2)
+  if [ -n "$TEMPLATE_BACKEND" ] && grep -q '^STT_BACKEND=' "$HOME_DIR/$PROJECT/.env" && \
+     [ "$(grep '^STT_BACKEND=' "$HOME_DIR/$PROJECT/.env" | cut -d= -f2)" != "$TEMPLATE_BACKEND" ]; then
+    note "updating STT_BACKEND -> $TEMPLATE_BACKEND"
+    sed -i "s/^STT_BACKEND=.*/STT_BACKEND=$TEMPLATE_BACKEND/" "$HOME_DIR/$PROJECT/.env"
+  fi
 fi
 if [ -f "$STAGE/models.json" ]; then
   # Always refresh models.json from the staged copy so model changes
@@ -114,7 +122,7 @@ note "installing communications deps"
 SHERPA_DIR="$HOME_DIR/sherpa-onnx"
 GLIBC_DIR="$HOME_DIR/../usr/glibc"
 GLIBC_LOADER="$GLIBC_DIR/lib/ld-linux-aarch64.so.1"
-SHERPA_BIN="$SHERPA_DIR/bin/sherpa-onnx-online-websocket-server"
+SHERPA_BIN="$SHERPA_DIR/bin/sherpa-onnx-offline-websocket-server"
 SHERPA_TMP="$HOME_DIR/tmp"
 mkdir -p "$SHERPA_TMP"
 
@@ -164,7 +172,7 @@ BOT_SESSION="bot"
 note "starting sherpa-onnx"
 tmux kill-session -t "$SHERPA_SESSION" 2>/dev/null || true
 tmux new-session -d -s "$SHERPA_SESSION" \
-  "sh -c 'exec env TMPDIR=$SHERPA_TMP LD_PRELOAD=$GLIBC_DIR/lib/libc.so.6 $GLIBC_LOADER --library-path $GLIBC_DIR/lib:$SHERPA_DIR/lib $SHERPA_BIN --port=__STT_PORT__ --num-threads=4 --decoding-method=modified_beam_search --max-active-paths=8 --tokens=$MODEL_DIR/tokens.txt --encoder=$MODEL_DIR/encoder.onnx --decoder=$MODEL_DIR/decoder.onnx --joiner=$MODEL_DIR/joiner.onnx 2>&1 | tee $HOME_DIR/sherpa.log'"
+  "sh -c 'exec env TMPDIR=$SHERPA_TMP LD_PRELOAD=$GLIBC_DIR/lib/libc.so.6 $GLIBC_LOADER --library-path $GLIBC_DIR/lib:$SHERPA_DIR/lib $SHERPA_BIN --port=__STT_PORT__ --num-threads=4 --max-batch-size=1 --max-utterance-length=300 --model-type=nemo_transducer --tokens=$MODEL_DIR/tokens.txt --encoder=$MODEL_DIR/encoder.int8.onnx --decoder=$MODEL_DIR/decoder.int8.onnx --joiner=$MODEL_DIR/joiner.int8.onnx 2>&1 | tee $HOME_DIR/sherpa.log'"
 sleep 2
 if curl -sSf -m 3 http://127.0.0.1:__STT_PORT__/ >/dev/null 2>&1; then
   note "sherpa-onnx listening on port __STT_PORT__"

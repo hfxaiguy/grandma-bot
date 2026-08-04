@@ -29,8 +29,11 @@ export const config = {
   ),
   workspaceDir: path.resolve(root, process.env.WORKSPACE_DIR ?? "workspace"),
   tmpDir: path.resolve(root, "tmp"),
-  /** STT backend: "whisper" (whisper.cpp server) or "sherpa" (sherpa-onnx websocket server). */
-  sttBackend: ((process.env.STT_BACKEND ?? "whisper").toLowerCase() === "sherpa" ? "sherpa" : "whisper") as "whisper" | "sherpa",
+  /** STT backend: "whisper" (whisper.cpp), "sherpa" (sherpa-onnx online websocket), or "parakeet" (sherpa-onnx offline websocket + NeMo parakeet). */
+  sttBackend: (() => {
+    const b = (process.env.STT_BACKEND ?? "whisper").toLowerCase();
+    return (b === "sherpa" || b === "parakeet" ? b : "whisper") as "whisper" | "sherpa" | "parakeet";
+  })(),
   whisperUrl: (process.env.WHISPER_URL ?? "http://127.0.0.1:8178").replace(/\/$/, ""),
   sherpaUrl: (process.env.SHERPA_URL ?? "http://127.0.0.1:8178").replace(/\/$/, ""),
   /** Spoken language for STT (e.g. "en", "de", "auto"). Empty = server default ("en"). */
