@@ -39,6 +39,12 @@ function chunk(text: string, size = MAX_TG_MESSAGE): string[] {
 
 export function createBot(deps: BotDeps): Bot {
   const bot = new Bot(deps.token);
+  // Keep the Telegram command menu in sync with the handlers below, so
+  // stale commands (set e.g. via BotFather earlier) disappear from the UI.
+  void bot.api.setMyCommands([
+    { command: "clear", description: "Clear conversation context for this topic" },
+    { command: "status", description: "Show workspace, git, model and STT status" },
+  ]).catch((err) => console.error("[commands]", err));
   // Serialize work per conversation so parallel voice notes don't interleave agent runs.
   const queues = new Map<string, Promise<void>>();
 
