@@ -118,8 +118,8 @@ function formatContent(kind: string, c: Record<string, unknown>, path: string, i
       break;
     }
     case "emit": {
-      const value = truncate(JSON.stringify(c.value), 80);
-      lines.push(`${C.green}  emit${C.reset}${path}: ${value}`);
+      const value = typeof c.value === "string" ? c.value : JSON.stringify(c.value);
+      lines.push(`${C.bold}  emit${C.reset}${path}: ${value}`);
       break;
     }
     case "human": {
